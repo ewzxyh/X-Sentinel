@@ -23,6 +23,11 @@
 		region: {},
 		session: 0,
 	});
+	const defaultAnalytics = () => ({
+		seenTotal: 0,
+		seenCountry: {},
+		seenRegion: {},
+	});
 	let config = {
 		blockedCountries: new Set(), // ← EMPTY
 		blockedLangs: new Set(), // ← EMPTY
@@ -33,6 +38,7 @@
 		filterMode: "block", // "block" | "highlight"
 		filterTotals: defaultTotals(),
 		highlightRegionDisplayOnly: false,
+		analytics: defaultAnalytics(),
 	};
 	const fetchQueue = [];
 
@@ -43,6 +49,8 @@
 	const FETCH_GAP_MS = 3500; // throttle outbound requests
 	const RATE_LIMIT_BACKOFF_MS = 2 * 60 * 1000; // back off 2 minutes on 429
 	const UNKNOWN_RETRY_MS = 10 * 60 * 1000; // retry unknowns after 10m
+	const FOLLOW_SCAN_MAX = 800; // limit following scan
+	const FOLLOW_FETCH_DELAY = 500;
 	const PREFETCH_BATCH = 5;
 	const PREFETCH_INTERVAL_MS = 4000;
 	const blockStats = { country: {}, lang: {}, region: {} }; // session-only counts
@@ -456,6 +464,10 @@
 			config.highlightRegionDisplayOnly = Boolean(
 				parsed.highlightRegionDisplayOnly,
 			);
+			config.analytics = {
+				...defaultAnalytics(),
+				...(parsed.analytics || {}),
+			};
 			if (parsed.knownUsers) {
 				config.knownUsers = {};
 				for (const [k, v] of Object.entries(parsed.knownUsers)) {
@@ -483,6 +495,7 @@
 				filterMode: config.filterMode,
 				filterTotals: config.filterTotals,
 				highlightRegionDisplayOnly: config.highlightRegionDisplayOnly,
+				analytics: config.analytics,
 			}),
 		);
 	}
@@ -585,6 +598,10 @@
 					session: totals.session || 0,
 				};
 				filteredCount = totals.session || 0;
+				config.analytics = {
+					...defaultAnalytics(),
+					...(totals.analytics || {}),
+				};
 			}
 		} catch (e) {
 			console.warn("[XCB] loadTotalsFromDB failed", e);
@@ -604,6 +621,7 @@
 				lang: config.filterTotals.lang || {},
 				region: config.filterTotals.region || {},
 				session: filteredCount,
+				analytics: config.analytics || defaultAnalytics(),
 				updated: nowTs(),
 			});
 		} catch (e) {
@@ -760,7 +778,11 @@
 		const parts = [];
 		if (hasCountry) {
 			const flag = countryCodeToFlag(countryCode) || countryCode;
-			parts.push(`Country: ${flag} ${countryCode}`);
+			const fullName =
+				Object.keys(COUNTRY_MAP).find(
+					(name) => COUNTRY_MAP[name] === countryCode,
+				) || countryCode;
+			parts.push(`Country: ${flag} ${fullName}`);
 		}
 		if (hasChanges) {
 			parts.push(`Username changes: ${usernameChanges}`);
@@ -792,6 +814,175 @@
 				actionWrapper.appendChild(row);
 			}
 		}
+	}
+
+	function recordSeen(countryCode, regionName, tweet) {
+		if (!countryCode && !regionName) return;
+		if (tweet?.dataset?.xcbSeenCounted) return;
+		tweet.dataset.xcbSeenCounted = "1";
+		config.analytics = config.analytics || defaultAnalytics();
+		config.analytics.seenTotal = (config.analytics.seenTotal || 0) + 1;
+		if (countryCode) {
+			config.analytics.seenCountry[countryCode] =
+				(config.analytics.seenCountry[countryCode] || 0) + 1;
+		}
+		if (regionName) {
+			config.analytics.seenRegion[regionName] =
+				(config.analytics.seenRegion[regionName] || 0) + 1;
+		}
+		scheduleTotalsSave();
+	}
+
+	async function fetchFollowingPage(cursor) {
+		const host = window.location.host || "x.com";
+		const url = `https://${host}/i/api/1.1/friends/list.json?count=200&skip_status=true&include_user_entities=false${
+			cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""
+		}`;
+		const resp = await fetch(url, {
+			credentials: "include",
+			headers: {
+				"x-csrf-token": getCsrfToken(),
+				authorization: `Bearer ${BEARER_TOKEN}`,
+				"x-twitter-active-user": "yes",
+				"x-twitter-auth-type": "OAuth2Session",
+				"content-type": "application/json",
+			},
+		});
+		const body = await resp.json();
+		return {
+			users: (body.users || []).map((u) => normUser(u.screen_name || "")),
+			next: body.next_cursor_str || null,
+		};
+	}
+
+	async function fetchCountryInfo(user) {
+		const host = window.location.host || "x.com";
+		const url = `https://${host}/i/api/graphql/${ABOUT_QUERY_ID}/AboutAccountQuery?variables=${encodeURIComponent(
+			JSON.stringify({ screenName: user }),
+		)}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}&fieldToggles=${encodeURIComponent(
+			JSON.stringify(FIELD_TOGGLES),
+		)}`;
+		try {
+			const resp = await fetch(url, {
+				credentials: "include",
+				method: "GET",
+				headers: {
+					"x-csrf-token": getCsrfToken(),
+					authorization: `Bearer ${BEARER_TOKEN}`,
+					"content-type": "application/json",
+					"x-twitter-active-user": "yes",
+					"x-twitter-auth-type": "OAuth2Session",
+					"x-twitter-client-language": navigator.language || "en",
+				},
+			});
+			const body = await resp.json();
+			const info = parseProfileFromJson(body);
+			return info.accountCountry || null;
+		} catch (e) {
+			console.warn("[XCB] fetchCountryInfo failed", user, e);
+			return null;
+		}
+	}
+
+	async function analyzeFollowing(updateStatus) {
+		try {
+			updateStatus("Fetching following list…");
+			let cursor = null;
+			const users = [];
+			do {
+				const { users: page, next } = await fetchFollowingPage(cursor);
+				users.push(...page);
+				cursor = next && next !== "0" ? next : null;
+			} while (cursor && users.length < FOLLOW_SCAN_MAX);
+			updateStatus(`Fetched ${users.length} accounts. Resolving countries…`);
+
+			const summary = {};
+			for (let i = 0; i < users.length; i += 1) {
+				const u = users[i];
+				let country = config.knownUsers[u]?.accountCountry || null;
+				if (!country) {
+					country = await fetchCountryInfo(u);
+					await new Promise((r) => setTimeout(r, FOLLOW_FETCH_DELAY));
+				}
+				if (!country) continue;
+				if (!summary[country]) summary[country] = [];
+				if (!summary[country].includes(u)) summary[country].push(u);
+				updateStatus(
+					`Resolved ${i + 1}/${users.length}… (${country} ${countryCodeToFlag(
+						country,
+					) || ""})`,
+				);
+			}
+
+			const reportDiv = document.getElementById("xcb-following-report");
+			if (reportDiv) {
+				const entries = Object.entries(summary).sort(
+					(a, b) => b[1].length - a[1].length,
+				);
+				reportDiv.innerHTML = entries
+					.map(
+						([code, list]) =>
+							`<div style="margin:4px 0;"><strong>${countryCodeToFlag(code) || ""} ${
+								Object.keys(COUNTRY_MAP).find(
+									(name) => COUNTRY_MAP[name] === code,
+								) || code
+							}</strong> (${list.length}): ${list
+								.slice(0, 30)
+								.map(
+									(u) =>
+										`<a href="https://x.com/${u}" target="_blank" rel="noopener noreferrer" style="color:#1d9bf0;text-decoration:none;">@${u}</a>`,
+								)
+								.join(", ")}${list.length > 30 ? "…" : ""}</div>`,
+					)
+					.join("") || "No countries resolved.";
+			}
+			updateStatus("Following analysis complete.");
+		} catch (e) {
+			console.error("[XCB] analyzeFollowing failed", e);
+			updateStatus("Following analysis failed; see console.");
+		}
+	}
+
+	function markChatFlag(container, user, countryCode) {
+		if (!user || !countryCode) return;
+		const flag = countryCodeToFlag(countryCode);
+		if (!flag) return;
+		const existingId = container.dataset.xcbChatFlagId;
+		if (existingId) {
+			const existing = document.getElementById(existingId);
+			if (existing) return;
+		}
+		const nameSpan =
+			container.querySelector("span:not([aria-hidden])") ||
+			container.querySelector("span");
+		if (!nameSpan) return;
+		const badge = document.createElement("span");
+		const id = `xcb-chat-flag-${Math.random().toString(36).slice(2, 9)}`;
+		badge.id = id;
+		badge.textContent = flag;
+		badge.style =
+			"margin-left:6px;font-size:14px;opacity:0.9;user-select:none;pointer-events:none;";
+		nameSpan.insertAdjacentElement("afterend", badge);
+		container.dataset.xcbChatFlagId = id;
+	}
+
+	function scanChatFlags() {
+		if (!window.location.pathname.startsWith("/messages")) return;
+		const targets = document.querySelectorAll(
+			'div[data-testid="DMDrawer"] div[data-testid="User-Name"], div[data-testid="DMConversation"] div[data-testid="User-Name"], div[aria-label^="Conversation"] div[data-testid="User-Name"], div[data-testid="DMChat"] div[data-testid="User-Name"]',
+		);
+		targets.forEach((node) => {
+			const userKey = extractUsername(node);
+			if (!userKey) return;
+			const info = config.knownUsers[userKey];
+			const code = info?.accountCountry || null;
+			if (code) {
+				markChatFlag(node, userKey, code);
+				recordSeen(code, info?.accountRegion || null, node);
+			} else if (needsFetch(userKey)) {
+				queueUser(userKey);
+			}
+		});
 	}
 
 	function updateFilteredDisplay() {
@@ -1226,6 +1417,9 @@
 				if (regionName && config.blockedRegions.has(regionName)) {
 					reason = reason ? `${reason}+Region` : `Region:${regionName}`;
 				}
+				if (accountCountry || regionName) {
+					recordSeen(accountCountry, regionName, tweet);
+				}
 				if (
 					!userInfo ||
 					(!userInfo.accountCountry &&
@@ -1368,6 +1562,10 @@
             <input id="add-l" placeholder="Add language (e.g. ar)" style="width:100%;padding:8px;margin:8px 0;border-radius:8px;">
             <div id="xcb-blocked-count" style="margin:8px 0;font-size:13px;color:#d9d9d9;">Filtered this session: 0</div>
             <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:6px 0;"><input type="checkbox" id="xcb-highlight-region-only"> Highlight accounts showing region-only (yellow)</label>
+            <div id="xcb-analytics" style="margin:10px 0;font-size:13px;color:#aab8c2;">Seen stats loading…</div>
+            <button id="xcb-following-scan" style="width:100%;padding:10px;background:#273340;border:none;border-radius:8px;color:#fff;margin-top:8px;cursor:pointer;">Analyze Following (country breakdown)</button>
+            <div id="xcb-following-status" style="margin:6px 0;font-size:12px;color:#aab8c2;"></div>
+            <div id="xcb-following-report" style="max-height:180px;overflow:auto;padding:8px;background:#0002;border-radius:8px;font-size:12px;color:#e7e9ea;"></div>
             <button id="export-db" style="width:100%;padding:10px;background:#273340;border:none;border-radius:8px;color:#fff;margin-top:12px;cursor:pointer;">Export DB (JSON)</button>
             <button id="close" style="width:100%;padding:10px;background:#1d9bf0;border:none;border-radius:8px;color:#fff;margin-top:12px;cursor:pointer;">Close</button>
         </div>`;
@@ -1428,6 +1626,21 @@
 				}
 				safeScan();
 			});
+		}
+
+		const followScanBtn = document.getElementById("xcb-following-scan");
+		const followStatus = document.getElementById("xcb-following-status");
+		if (followScanBtn && followStatus) {
+			followScanBtn.onclick = () => {
+				if (followScanBtn.disabled) return;
+				followScanBtn.disabled = true;
+				followStatus.textContent = "Starting following analysis…";
+				analyzeFollowing((msg) => {
+					followStatus.textContent = msg;
+				}).finally(() => {
+					followScanBtn.disabled = false;
+				});
+			};
 		}
 
 		const refreshList = () => {
@@ -1499,6 +1712,32 @@
 					});
 					langList.appendChild(row);
 				});
+
+			const analyticsDiv = document.getElementById("xcb-analytics");
+			if (analyticsDiv) {
+				const topCountries = Object.entries(
+					config.analytics?.seenCountry || {},
+				)
+					.sort((a, b) => b[1] - a[1])
+					.slice(0, 8)
+					.map(
+						([code, count]) =>
+							`${countryCodeToFlag(code) || ""} ${code} (${count})`,
+					)
+					.join(", ");
+				const topRegions = Object.entries(config.analytics?.seenRegion || {})
+					.sort((a, b) => b[1] - a[1])
+					.slice(0, 6)
+					.map(([name, count]) => `${name} (${count})`)
+					.join(", ");
+				analyticsDiv.innerHTML = `<div style="margin-top:6px;">Seen (total): ${
+					config.analytics?.seenTotal || 0
+				}</div><div style="margin-top:4px;">Top countries: ${
+					topCountries || "—"
+				}</div><div style="margin-top:4px;">Top regions: ${
+					topRegions || "—"
+				}</div>`;
+			}
 		};
 
 		const openModal = () => {
@@ -1598,6 +1837,7 @@
 	function safeScan() {
 		try {
 			scanAndHide();
+			scanChatFlags();
 		} catch (e) {
 			console.error("scan error", e);
 		}
