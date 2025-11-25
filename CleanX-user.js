@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         X Country Blocker - Clean Start (No Defaults)
+// @name         X Country Blocker - Clean Start (Universal Language)
 // @namespace    http://tampermonkey.net/
-// @version      5.1
-// @description  Block by country & language — completely empty by default. You decide everything.
+// @version      5.2
+// @description  Block by country & language. Works in any language (PT-BR supported).
 // @author       A Pleasant Experience
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -29,13 +29,13 @@
 		seenRegion: {},
 	});
 	let config = {
-		blockedCountries: new Set(), // ← EMPTY
-		blockedLangs: new Set(), // ← EMPTY
-		blockedRegions: new Set(), // ← EMPTY
-		countryDB: {}, // code -> [usernames]
-		knownUsers: {}, // username -> { accountCountry, accountRegion, usernameChanges, ts }
+		blockedCountries: new Set(),
+		blockedLangs: new Set(),
+		blockedRegions: new Set(),
+		countryDB: {},
+		knownUsers: {},
 		pending: new Set(),
-		filterMode: "block", // "block" | "highlight"
+		filterMode: "block",
 		filterTotals: defaultTotals(),
 		highlightRegionDisplayOnly: false,
 		analytics: defaultAnalytics(),
@@ -46,14 +46,14 @@
 	let filteredCount = 0;
 	let totalsSaveTimer = null;
 	let nextFetchAllowed = 0;
-	const FETCH_GAP_MS = 3500; // throttle outbound requests
-	const RATE_LIMIT_BACKOFF_MS = 2 * 60 * 1000; // back off 2 minutes on 429
-	const UNKNOWN_RETRY_MS = 10 * 60 * 1000; // retry unknowns after 10m
-	const FOLLOW_SCAN_MAX = 800; // limit following scan
+	const FETCH_GAP_MS = 3500;
+	const RATE_LIMIT_BACKOFF_MS = 2 * 60 * 1000;
+	const UNKNOWN_RETRY_MS = 10 * 60 * 1000;
+	const FOLLOW_SCAN_MAX = 800;
 	const FOLLOW_FETCH_DELAY = 500;
 	const PREFETCH_BATCH = 5;
 	const PREFETCH_INTERVAL_MS = 4000;
-	const blockStats = { country: {}, lang: {}, region: {} }; // session-only counts
+	const blockStats = { country: {}, lang: {}, region: {} };
 	let dbPromise = null;
 	const FIELD_TOGGLES = { withAuxiliaryUserLabels: false };
 	const BEARER_TOKEN =
@@ -75,9 +75,8 @@
 		vibe_api_enabled: true,
 	};
 
-	// Full country map (unchanged)
 	const COUNTRY_MAP = {
-		/* same huge list as before */ Afghanistan: "AF",
+		Afghanistan: "AF",
 		Albania: "AL",
 		Algeria: "DZ",
 		Andorra: "AD",
@@ -215,89 +214,11 @@
 	const REGION_DEFS = [
 		{
 			name: "Africa",
-			codes: [
-				"DZ",
-				"AO",
-				"BJ",
-				"BW",
-				"BF",
-				"BI",
-				"CM",
-				"CV",
-				"CF",
-				"TD",
-				"KM",
-				"CG",
-				"CD",
-				"DJ",
-				"EG",
-				"GQ",
-				"ER",
-				"ET",
-				"GA",
-				"GM",
-				"GH",
-				"GN",
-				"GW",
-				"CI",
-				"KE",
-				"LS",
-				"LR",
-				"LY",
-				"MG",
-				"MW",
-				"ML",
-				"MR",
-				"MU",
-				"MA",
-				"MZ",
-				"NA",
-				"NE",
-				"NG",
-				"RE",
-				"RW",
-				"ST",
-				"SN",
-				"SC",
-				"SL",
-				"SO",
-				"ZA",
-				"SS",
-				"SD",
-				"SZ",
-				"TZ",
-				"TG",
-				"TN",
-				"UG",
-				"YT",
-				"ZM",
-				"ZW",
-			],
+			codes: ["DZ","AO","BJ","BW","BF","BI","CM","CV","CF","TD","KM","CG","CD","DJ","EG","GQ","ER","ET","GA","GM","GH","GN","GW","CI","KE","LS","LR","LY","MG","MW","ML","MR","MU","MA","MZ","NA","NE","NG","RE","RW","ST","SN","SC","SL","SO","ZA","SS","SD","SZ","TZ","TG","TN","UG","YT","ZM","ZW"],
 		},
 		{
 			name: "Middle East and North Africa",
-			codes: [
-				"IR",
-				"IQ",
-				"IL",
-				"JO",
-				"LB",
-				"SA",
-				"AE",
-				"QA",
-				"BH",
-				"KW",
-				"EG",
-				"MA",
-				"DZ",
-				"TN",
-				"LY",
-				"TR",
-				"OM",
-				"YE",
-				"SY",
-				"PS",
-			],
+			codes: ["IR","IQ","IL","JO","LB","SA","AE","QA","BH","KW","EG","MA","DZ","TN","LY","TR","OM","YE","SY","PS"],
 		},
 		{
 			name: "South Asia",
@@ -309,51 +230,11 @@
 		},
 		{
 			name: "East Asia and Pacific",
-			codes: [
-				"CN",
-				"JP",
-				"KR",
-				"TW",
-				"PH",
-				"ID",
-				"TH",
-				"VN",
-				"MY",
-				"SG",
-				"AU",
-				"NZ",
-				"HK",
-				"MO",
-				"PG",
-				"FJ",
-			],
+			codes: ["CN","JP","KR","TW","PH","ID","TH","VN","MY","SG","AU","NZ","HK","MO","PG","FJ"],
 		},
 		{
 			name: "Latin America",
-			codes: [
-				"MX",
-				"BR",
-				"AR",
-				"CL",
-				"CO",
-				"PE",
-				"VE",
-				"UY",
-				"PY",
-				"BO",
-				"CR",
-				"PA",
-				"DO",
-				"HN",
-				"GT",
-				"SV",
-				"CU",
-				"EC",
-				"PR",
-				"JM",
-				"TT",
-				"NI",
-			],
+			codes: ["MX","BR","AR","CL","CO","PE","VE","UY","PY","BO","CR","PA","DO","HN","GT","SV","CU","EC","PR","JM","TT","NI"],
 		},
 		{
 			name: "South America",
@@ -361,85 +242,15 @@
 		},
 		{
 			name: "Eastern Europe",
-			codes: [
-				"RU",
-				"UA",
-				"LV",
-				"RO",
-				"PL",
-				"HU",
-				"BG",
-				"CZ",
-				"SK",
-				"SI",
-				"RS",
-				"HR",
-				"BA",
-				"BY",
-				"LT",
-				"EE",
-				"MD",
-				"GE",
-			],
+			codes: ["RU","UA","LV","RO","PL","HU","BG","CZ","SK","SI","RS","HR","BA","BY","LT","EE","MD","GE"],
 		},
 		{
 			name: "Western Europe",
-			codes: [
-				"GB",
-				"FR",
-				"DE",
-				"ES",
-				"PT",
-				"IT",
-				"NL",
-				"BE",
-				"CH",
-				"AT",
-				"IE",
-				"NO",
-				"SE",
-				"DK",
-				"FI",
-				"LU",
-				"GR",
-			],
+			codes: ["GB","FR","DE","ES","PT","IT","NL","BE","CH","AT","IE","NO","SE","DK","FI","LU","GR"],
 		},
 		{
 			name: "Europe",
-			codes: [
-				"GB",
-				"FR",
-				"DE",
-				"ES",
-				"PT",
-				"IT",
-				"NL",
-				"BE",
-				"CH",
-				"AT",
-				"IE",
-				"NO",
-				"SE",
-				"DK",
-				"FI",
-				"LU",
-				"CZ",
-				"PL",
-				"HU",
-				"RO",
-				"BG",
-				"RS",
-				"HR",
-				"SI",
-				"SK",
-				"UA",
-				"LT",
-				"LV",
-				"EE",
-				"GR",
-				"MD",
-				"GE",
-			],
+			codes: ["GB","FR","DE","ES","PT","IT","NL","BE","CH","AT","IE","NO","SE","DK","FI","LU","CZ","PL","HU","RO","BG","RS","HR","SI","SK","UA","LT","LV","EE","GR","MD","GE"],
 		},
 		{
 			name: "North America",
@@ -455,29 +266,17 @@
 			config.blockedLangs = new Set(parsed.blockedLangs || []);
 			config.blockedRegions = new Set(parsed.blockedRegions || []);
 			config.countryDB = parsed.countryDB || {};
-			config.filterMode =
-				parsed.filterMode === "highlight" ? "highlight" : "block";
-			config.filterTotals = {
-				...defaultTotals(),
-				...(parsed.filterTotals || {}),
-			};
-			config.highlightRegionDisplayOnly = Boolean(
-				parsed.highlightRegionDisplayOnly,
-			);
-			config.analytics = {
-				...defaultAnalytics(),
-				...(parsed.analytics || {}),
-			};
+			config.filterMode = parsed.filterMode === "highlight" ? "highlight" : "block";
+			config.filterTotals = { ...defaultTotals(), ...(parsed.filterTotals || {}) };
+			config.highlightRegionDisplayOnly = Boolean(parsed.highlightRegionDisplayOnly);
+			config.analytics = { ...defaultAnalytics(), ...(parsed.analytics || {}) };
 			if (parsed.knownUsers) {
 				config.knownUsers = {};
 				for (const [k, v] of Object.entries(parsed.knownUsers)) {
 					config.knownUsers[k] = {
 						accountCountry: v.accountCountry || null,
 						accountRegion: v.accountRegion || null,
-						usernameChanges:
-							typeof v.usernameChanges === "number"
-								? v.usernameChanges
-								: null,
+						usernameChanges: typeof v.usernameChanges === "number" ? v.usernameChanges : null,
 						ts: v.ts || 0,
 					};
 				}
@@ -548,10 +347,7 @@
 				config.knownUsers[row.user] = {
 					accountCountry: row.accountCountry || null,
 					accountRegion: row.accountRegion || null,
-					usernameChanges:
-						typeof row.usernameChanges === "number"
-							? row.usernameChanges
-							: null,
+					usernameChanges: typeof row.usernameChanges === "number" ? row.usernameChanges : null,
 					ts: row.ts || 0,
 				};
 			}
@@ -568,10 +364,7 @@
 				user,
 				accountCountry: data.accountCountry || null,
 				accountRegion: data.accountRegion || null,
-				usernameChanges:
-					typeof data.usernameChanges === "number"
-						? data.usernameChanges
-						: null,
+				usernameChanges: typeof data.usernameChanges === "number" ? data.usernameChanges : null,
 				ts: data.ts || nowTs(),
 			});
 		} catch (e) {
@@ -598,10 +391,7 @@
 					session: totals.session || 0,
 				};
 				filteredCount = totals.session || 0;
-				config.analytics = {
-					...defaultAnalytics(),
-					...(totals.analytics || {}),
-				};
+				config.analytics = { ...defaultAnalytics(), ...(totals.analytics || {}) };
 			}
 		} catch (e) {
 			console.warn("[XCB] loadTotalsFromDB failed", e);
@@ -645,29 +435,18 @@
 	}
 
 	function extractUsername(tweet) {
-		const link =
-			tweet.querySelector('div[data-testid="User-Name"] a[href]') ||
-			tweet.querySelector('a[href*="/status/"]');
+		const link = tweet.querySelector('div[data-testid="User-Name"] a[href]') || tweet.querySelector('a[href*="/status/"]');
 		if (!link) return null;
-
 		let href = link.getAttribute("href") || "";
 		if (/^https?:\/\//i.test(href)) {
 			try {
 				href = new URL(href).pathname;
-			} catch (e) {
-				/* ignore */
-			}
+			} catch (e) {}
 		}
 		const parts = href.split("/").filter(Boolean);
 		if (!parts.length) return null;
-		// Prefer the first non-reserved segment
 		const candidate = parts[0];
-		if (
-			["i", "home", "explore", "notifications", "messages", "search"].includes(
-				candidate,
-			)
-		)
-			return null;
+		if (["i", "home", "explore", "notifications", "messages", "search"].includes(candidate)) return null;
 		return normUser(candidate);
 	}
 
@@ -676,21 +455,10 @@
 		const raw = input.trim();
 		if (!raw) return null;
 		const upper = raw.toUpperCase();
-		if (
-			upper.length === 2 &&
-			COUNTRY_MAP &&
-			Object.values(COUNTRY_MAP).includes(upper)
-		)
-			return upper;
-		// fuzzy by country name substring
-		const found = Object.entries(COUNTRY_MAP).find(([name]) =>
-			name.toLowerCase().includes(raw.toLowerCase()),
-		);
+		if (upper.length === 2 && COUNTRY_MAP && Object.values(COUNTRY_MAP).includes(upper)) return upper;
+		const found = Object.entries(COUNTRY_MAP).find(([name]) => name.toLowerCase().includes(raw.toLowerCase()));
 		return found ? found[1] : null;
 	}
-
-	// ← everything else (fetch, hide, UI, scanning) is 100% identical to v5.0 above ←
-	// (just copy the full body from the previous working script, only the config defaults changed)
 
 	function hasBlockedLang(text) {
 		if (!text) return false;
@@ -721,15 +489,12 @@
 		if (!input) return null;
 		const norm = input.trim().toLowerCase();
 		if (!norm) return null;
-		const found = REGION_DEFS.find(
-			(def) => def.name.toLowerCase() === norm,
-		);
+		const found = REGION_DEFS.find((def) => def.name.toLowerCase() === norm);
 		if (found) return found.name;
 		return null;
 	}
 
 	function renderFlag(tweet, countryCode) {
-		// Feature disabled: keep cleanup only
 		const flagWrapId = tweet.dataset.xcbFlagId;
 		if (flagWrapId) {
 			const existing = document.getElementById(flagWrapId);
@@ -753,8 +518,7 @@
 		const id = `xcb-overlay-${Math.random().toString(36).slice(2, 9)}`;
 		overlay.id = id;
 		overlay.textContent = flag;
-		overlay.style =
-			"position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:220px;opacity:0.11;pointer-events:none;user-select:none;filter:saturate(0.9);z-index:1;overflow:hidden;line-height:1;";
+		overlay.style = "position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:220px;opacity:0.11;pointer-events:none;user-select:none;filter:saturate(0.9);z-index:1;overflow:hidden;line-height:1;";
 		overlay.style.width = "100%";
 		overlay.style.height = "100%";
 		overlay.style.transform = "scale(1.1)";
@@ -778,10 +542,7 @@
 		const parts = [];
 		if (hasCountry) {
 			const flag = countryCodeToFlag(countryCode) || countryCode;
-			const fullName =
-				Object.keys(COUNTRY_MAP).find(
-					(name) => COUNTRY_MAP[name] === countryCode,
-				) || countryCode;
+			const fullName = Object.keys(COUNTRY_MAP).find((name) => COUNTRY_MAP[name] === countryCode) || countryCode;
 			parts.push(`Country: ${flag} ${fullName}`);
 		}
 		if (hasChanges) {
@@ -801,8 +562,7 @@
 			row = document.createElement("div");
 			const id = `xcb-footer-${Math.random().toString(36).slice(2, 9)}`;
 			row.id = id;
-			row.style =
-				"display:flex;flex-wrap:wrap;gap:12px;padding:6px 12px 4px;margin-top:2px;font-size:12px;color:rgb(170,184,194);";
+			row.style = "display:flex;flex-wrap:wrap;gap:12px;padding:6px 12px 4px;margin-top:2px;font-size:12px;color:rgb(170,184,194);";
 			tweet.dataset.xcbFooterId = id;
 		}
 		if (row.textContent !== content) row.textContent = content;
@@ -822,22 +582,14 @@
 		tweet.dataset.xcbSeenCounted = "1";
 		config.analytics = config.analytics || defaultAnalytics();
 		config.analytics.seenTotal = (config.analytics.seenTotal || 0) + 1;
-		if (countryCode) {
-			config.analytics.seenCountry[countryCode] =
-				(config.analytics.seenCountry[countryCode] || 0) + 1;
-		}
-		if (regionName) {
-			config.analytics.seenRegion[regionName] =
-				(config.analytics.seenRegion[regionName] || 0) + 1;
-		}
+		if (countryCode) config.analytics.seenCountry[countryCode] = (config.analytics.seenCountry[countryCode] || 0) + 1;
+		if (regionName) config.analytics.seenRegion[regionName] = (config.analytics.seenRegion[regionName] || 0) + 1;
 		scheduleTotalsSave();
 	}
 
 	async function fetchFollowingPage(cursor) {
 		const host = window.location.host || "x.com";
-		const url = `https://${host}/i/api/1.1/friends/list.json?count=200&skip_status=true&include_user_entities=false${
-			cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""
-		}`;
+		const url = `https://${host}/i/api/1.1/friends/list.json?count=200&skip_status=true&include_user_entities=false${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
 		const resp = await fetch(url, {
 			credentials: "include",
 			headers: {
@@ -857,11 +609,7 @@
 
 	async function fetchCountryInfo(user) {
 		const host = window.location.host || "x.com";
-		const url = `https://${host}/i/api/graphql/${ABOUT_QUERY_ID}/AboutAccountQuery?variables=${encodeURIComponent(
-			JSON.stringify({ screenName: user }),
-		)}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}&fieldToggles=${encodeURIComponent(
-			JSON.stringify(FIELD_TOGGLES),
-		)}`;
+		const url = `https://${host}/i/api/graphql/${ABOUT_QUERY_ID}/AboutAccountQuery?variables=${encodeURIComponent(JSON.stringify({ screenName: user }))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}&fieldToggles=${encodeURIComponent(JSON.stringify(FIELD_TOGGLES))}`;
 		try {
 			const resp = await fetch(url, {
 				credentials: "include",
@@ -907,34 +655,15 @@
 				if (!country) continue;
 				if (!summary[country]) summary[country] = [];
 				if (!summary[country].includes(u)) summary[country].push(u);
-				updateStatus(
-					`Resolved ${i + 1}/${users.length}… (${country} ${countryCodeToFlag(
-						country,
-					) || ""})`,
-				);
+				updateStatus(`Resolved ${i + 1}/${users.length}… (${country} ${countryCodeToFlag(country) || ""})`);
 			}
 
 			const reportDiv = document.getElementById("xcb-following-report");
 			if (reportDiv) {
-				const entries = Object.entries(summary).sort(
-					(a, b) => b[1].length - a[1].length,
-				);
-				reportDiv.innerHTML = entries
-					.map(
-						([code, list]) =>
-							`<div style="margin:4px 0;"><strong>${countryCodeToFlag(code) || ""} ${
-								Object.keys(COUNTRY_MAP).find(
-									(name) => COUNTRY_MAP[name] === code,
-								) || code
-							}</strong> (${list.length}): ${list
-								.slice(0, 30)
-								.map(
-									(u) =>
-										`<a href="https://x.com/${u}" target="_blank" rel="noopener noreferrer" style="color:#1d9bf0;text-decoration:none;">@${u}</a>`,
-								)
-								.join(", ")}${list.length > 30 ? "…" : ""}</div>`,
-					)
-					.join("") || "No countries resolved.";
+				const entries = Object.entries(summary).sort((a, b) => b[1].length - a[1].length);
+				reportDiv.innerHTML = entries.map(([code, list]) =>
+					`<div style="margin:4px 0;"><strong>${countryCodeToFlag(code) || ""} ${Object.keys(COUNTRY_MAP).find((name) => COUNTRY_MAP[name] === code) || code}</strong> (${list.length}): ${list.slice(0, 30).map((u) => `<a href="https://x.com/${u}" target="_blank" rel="noopener noreferrer" style="color:#1d9bf0;text-decoration:none;">@${u}</a>`).join(", ")}${list.length > 30 ? "…" : ""}</div>`
+				).join("") || "No countries resolved.";
 			}
 			updateStatus("Following analysis complete.");
 		} catch (e) {
@@ -952,25 +681,20 @@
 			const existing = document.getElementById(existingId);
 			if (existing) return;
 		}
-		const nameSpan =
-			container.querySelector("span:not([aria-hidden])") ||
-			container.querySelector("span");
+		const nameSpan = container.querySelector("span:not([aria-hidden])") || container.querySelector("span");
 		if (!nameSpan) return;
 		const badge = document.createElement("span");
 		const id = `xcb-chat-flag-${Math.random().toString(36).slice(2, 9)}`;
 		badge.id = id;
 		badge.textContent = flag;
-		badge.style =
-			"margin-left:6px;font-size:14px;opacity:0.9;user-select:none;pointer-events:none;";
+		badge.style = "margin-left:6px;font-size:14px;opacity:0.9;user-select:none;pointer-events:none;";
 		nameSpan.insertAdjacentElement("afterend", badge);
 		container.dataset.xcbChatFlagId = id;
 	}
 
 	function scanChatFlags() {
 		if (!window.location.pathname.startsWith("/messages")) return;
-		const targets = document.querySelectorAll(
-			'div[data-testid="DMDrawer"] div[data-testid="User-Name"], div[data-testid="DMConversation"] div[data-testid="User-Name"], div[aria-label^="Conversation"] div[data-testid="User-Name"], div[data-testid="DMChat"] div[data-testid="User-Name"]',
-		);
+		const targets = document.querySelectorAll('div[data-testid="DMDrawer"] div[data-testid="User-Name"], div[data-testid="DMConversation"] div[data-testid="User-Name"], div[aria-label^="Conversation"] div[data-testid="User-Name"], div[data-testid="DMChat"] div[data-testid="User-Name"]');
 		targets.forEach((node) => {
 			const userKey = extractUsername(node);
 			if (!userKey) return;
@@ -988,9 +712,7 @@
 	function updateFilteredDisplay() {
 		const counterEl = document.getElementById("xcb-blocked-count");
 		if (counterEl)
-			counterEl.textContent = `Filtered this session: ${filteredCount} (${config.filterMode === "highlight" ? "highlight" : "block"}) | Total: ${
-				config.filterTotals?.overall || 0
-			}`;
+			counterEl.textContent = `Filtered this session: ${filteredCount} (${config.filterMode === "highlight" ? "highlight" : "block"}) | Total: ${config.filterTotals?.overall || 0}`;
 	}
 
 	function clearFilterMark(tweet) {
@@ -1041,8 +763,7 @@
 		const noteId = `xcb-note-${Math.random().toString(36).slice(2, 9)}`;
 		box.id = noteId;
 		box.textContent = `Blocked: ${reason}`;
-		box.style =
-			"background:#000;color:#fff;padding:4px 8px;font-size:11px;border-radius:4px;margin:8px 0;";
+		box.style = "background:#000;color:#fff;padding:4px 8px;font-size:11px;border-radius:4px;margin:8px 0;";
 		tweet.parentNode?.insertBefore(box, tweet);
 		tweet.dataset.xcbNoteId = noteId;
 		console.log("Blocked:", reason);
@@ -1052,34 +773,23 @@
 		tweet.dataset.xcbMode = "highlight";
 		tweet.dataset.xcbReason = reason;
 		const flag = countryCodeToFlag(countryCode);
-		const displayText = flag
-			? `${flag} ${countryCode || ""}`
-			: reason.replace(/\+/g, " + ");
+		const displayText = flag ? `${flag} ${countryCode || ""}` : reason.replace(/\+/g, " + ");
 		const currentPos = getComputedStyle(tweet).position;
 		if (currentPos === "static") {
 			tweet.dataset.xcbPrevPosition = tweet.style.position || "";
 			tweet.style.position = "relative";
 		}
 		const palette = flagPalette(countryCode);
-		tweet.style.setProperty(
-			"outline",
-			`3px solid ${palette.primary}`,
-			"important",
-		);
+		tweet.style.setProperty("outline", `3px solid ${palette.primary}`, "important");
 		tweet.style.setProperty("outline-offset", "2px", "important");
-		tweet.style.setProperty(
-			"box-shadow",
-			`0 0 0 3px ${palette.shadow}`,
-			"important",
-		);
+		tweet.style.setProperty("box-shadow", `0 0 0 3px ${palette.shadow}`, "important");
 		tweet.style.setProperty("background-color", palette.background, "important");
 
 		const badge = document.createElement("div");
 		const badgeId = `xcb-badge-${Math.random().toString(36).slice(2, 9)}`;
 		badge.id = badgeId;
 		badge.textContent = displayText;
-		badge.style =
-			"position:absolute;top:-10px;left:-10px;background:#ff4d4f;color:#fff;padding:6px 10px;border-radius:10px;font-size:12px;font-weight:bold;box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:2;";
+		badge.style = "position:absolute;top:-10px;left:-10px;background:#ff4d4f;color:#fff;padding:6px 10px;border-radius:10px;font-size:12px;font-weight:bold;box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:2;";
 		tweet.appendChild(badge);
 		tweet.dataset.xcbBadgeId = badgeId;
 		addFlagOverlay(tweet, countryCode);
@@ -1097,19 +807,14 @@
 		tweet.dataset.xcbReason = `RegionOnly:${regionName}`;
 		tweet.style.setProperty("outline", "3px solid #f5c400", "important");
 		tweet.style.setProperty("outline-offset", "2px", "important");
-		tweet.style.setProperty(
-			"box-shadow",
-			"0 0 0 3px rgba(245,196,0,0.35)",
-			"important",
-		);
+		tweet.style.setProperty("box-shadow", "0 0 0 3px rgba(245,196,0,0.35)", "important");
 		tweet.style.setProperty("background-color", "rgba(245,196,0,0.12)", "important");
 
 		const badge = document.createElement("div");
 		const badgeId = `xcb-badge-${Math.random().toString(36).slice(2, 9)}`;
 		badge.id = badgeId;
 		badge.textContent = `Region-only: ${regionName}`;
-		badge.style =
-			"position:absolute;top:-10px;left:-10px;background:#f5c400;color:#1c1c1c;padding:6px 10px;border-radius:10px;font-size:12px;font-weight:bold;box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:2;";
+		badge.style = "position:absolute;top:-10px;left:-10px;background:#f5c400;color:#1c1c1c;padding:6px 10px;border-radius:10px;font-size:12px;font-weight:bold;box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:2;";
 		tweet.appendChild(badge);
 		tweet.dataset.xcbBadgeId = badgeId;
 	}
@@ -1117,21 +822,17 @@
 	function bumpCounts({ countryCode, lang }) {
 		config.filterTotals = config.filterTotals || defaultTotals();
 		if (countryCode) {
-			blockStats.country[countryCode] =
-				(blockStats.country[countryCode] || 0) + 1;
-			config.filterTotals.country[countryCode] =
-				(config.filterTotals.country[countryCode] || 0) + 1;
+			blockStats.country[countryCode] = (blockStats.country[countryCode] || 0) + 1;
+			config.filterTotals.country[countryCode] = (config.filterTotals.country[countryCode] || 0) + 1;
 		}
 		if (lang) {
 			blockStats.lang[lang] = (blockStats.lang[lang] || 0) + 1;
-			config.filterTotals.lang[lang] =
-				(config.filterTotals.lang[lang] || 0) + 1;
+			config.filterTotals.lang[lang] = (config.filterTotals.lang[lang] || 0) + 1;
 		}
 		if (arguments[0]?.region) {
 			const region = arguments[0].region;
 			blockStats.region[region] = (blockStats.region[region] || 0) + 1;
-			config.filterTotals.region[region] =
-				(config.filterTotals.region[region] || 0) + 1;
+			config.filterTotals.region[region] = (config.filterTotals.region[region] || 0) + 1;
 		}
 		config.filterTotals.overall = (config.filterTotals.overall || 0) + 1;
 		config.filterTotals.session = filteredCount;
@@ -1166,8 +867,7 @@
 	}
 
 	function parseProfileFromJson(obj) {
-		if (!obj || typeof obj !== "object")
-			return { accountCountry: null };
+		if (!obj || typeof obj !== "object") return { accountCountry: null };
 		const result =
 			obj.user?.result ||
 			obj.user_result_by_screen_name?.result ||
@@ -1179,58 +879,16 @@
 
 		if (!result) return { accountCountry: null };
 
-		const about =
-			result.aboutModule ||
-			result.about ||
-			result.legacy?.about ||
-			result.about_account ||
-			result;
+		const about = result.aboutModule || result.about || result.legacy?.about || result.about_account || result;
+		const aboutProfile = result.about_profile || result.aboutProfile || result.profile || result.profile_about || {};
 
-		const aboutProfile =
-			result.about_profile ||
-			result.aboutProfile ||
-			result.profile ||
-			result.profile_about ||
-			{};
+		const accountCountryRaw = about?.accountBasedIn || about?.account_based_in || about?.account_base || about?.accountCountry || aboutProfile?.account_based_in || aboutProfile?.accountBasedIn || null;
+		const accountRegionRaw = about?.accountRegion || about?.account_region || aboutProfile?.account_region || aboutProfile?.accountRegion || null;
+		const usernameChangesRaw = aboutProfile?.usernameChangeCount || aboutProfile?.username_changes || aboutProfile?.screen_name_change_count || about?.usernameChangeCount || about?.username_changes || about?.screen_name_change_count || result.legacy?.screen_name_change_count || null;
 
-		const accountCountryRaw =
-			about?.accountBasedIn ||
-			about?.account_based_in ||
-			about?.account_base ||
-			about?.accountCountry ||
-			aboutProfile?.account_based_in ||
-			aboutProfile?.accountBasedIn ||
-			null;
-		const accountRegionRaw =
-			about?.accountRegion ||
-			about?.account_region ||
-			aboutProfile?.account_region ||
-			aboutProfile?.accountRegion ||
-			null;
-		const usernameChangesRaw =
-			aboutProfile?.usernameChangeCount ||
-			aboutProfile?.username_changes ||
-			aboutProfile?.screen_name_change_count ||
-			about?.usernameChangeCount ||
-			about?.username_changes ||
-			about?.screen_name_change_count ||
-			result.legacy?.screen_name_change_count ||
-			null;
-
-		const accountCountry = accountCountryRaw
-			? COUNTRY_MAP[accountCountryRaw] ||
-				accountCountryRaw.slice(0, 2).toUpperCase()
-			: null;
-		const accountRegion =
-			typeof accountRegionRaw === "string" && accountRegionRaw.trim()
-				? accountRegionRaw.trim()
-				: null;
-		const usernameChanges =
-			typeof usernameChangesRaw === "number"
-				? usernameChangesRaw
-				: Number.isFinite(Number(usernameChangesRaw))
-					? Number(usernameChangesRaw)
-					: null;
+		const accountCountry = accountCountryRaw ? COUNTRY_MAP[accountCountryRaw] || accountCountryRaw.slice(0, 2).toUpperCase() : null;
+		const accountRegion = typeof accountRegionRaw === "string" && accountRegionRaw.trim() ? accountRegionRaw.trim() : null;
+		const usernameChanges = typeof usernameChangesRaw === "number" ? usernameChangesRaw : Number.isFinite(Number(usernameChangesRaw)) ? Number(usernameChangesRaw) : null;
 
 		return { accountCountry, accountRegion, usernameChanges };
 	}
@@ -1242,13 +900,7 @@
 
 	function needsFetch(user) {
 		if (!user) return false;
-		if (
-			config.blockedCountries.size === 0 &&
-			config.blockedLangs.size === 0 &&
-			config.blockedRegions.size === 0 &&
-			!config.highlightRegionDisplayOnly
-		)
-			return false;
+		if (config.blockedCountries.size === 0 && config.blockedLangs.size === 0 && config.blockedRegions.size === 0 && !config.highlightRegionDisplayOnly) return false;
 		const known = config.knownUsers[user];
 		if (!known) return true;
 		if (known.accountCountry) return false;
@@ -1279,34 +931,18 @@
 		}
 		if (config.pending.has(user)) return false;
 
-		// Avoid hammering if nothing to block
-		if (
-			config.blockedCountries.size === 0 &&
-			config.blockedLangs.size === 0 &&
-			config.blockedRegions.size === 0 &&
-			!config.highlightRegionDisplayOnly
-		)
-			return false;
+		if (config.blockedCountries.size === 0 && config.blockedLangs.size === 0 && config.blockedRegions.size === 0 && !config.highlightRegionDisplayOnly) return false;
 
-		// Respect global throttle
 		const now = nowTs();
 		if (now < nextFetchAllowed) {
-			// schedule retry later by stamping ts to avoid tight loop
-			config.knownUsers[user] = {
-				accountCountry: null,
-				ts: now,
-			};
+			config.knownUsers[user] = { accountCountry: null, ts: now };
 			return false;
 		}
 
 		config.pending.add(user);
 		console.log("[XCB] fetching about page for", user);
 		const host = window.location.host || "x.com";
-		const url = `https://${host}/i/api/graphql/${ABOUT_QUERY_ID}/AboutAccountQuery?variables=${encodeURIComponent(
-			JSON.stringify({ screenName: user }),
-		)}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}&fieldToggles=${encodeURIComponent(
-			JSON.stringify(FIELD_TOGGLES),
-		)}`;
+		const url = `https://${host}/i/api/graphql/${ABOUT_QUERY_ID}/AboutAccountQuery?variables=${encodeURIComponent(JSON.stringify({ screenName: user }))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}&fieldToggles=${encodeURIComponent(JSON.stringify(FIELD_TOGGLES))}`;
 
 		fetch(url, {
 			credentials: "include",
@@ -1322,18 +958,10 @@
 				referer: `https://${host}/${user}`,
 			},
 		})
-			.then((resp) =>
-				resp
-					.json()
-					.then((body) => ({ status: resp.status, body }))
-					.catch(() => ({ status: resp.status, body: {} })),
-			)
+			.then((resp) => resp.json().then((body) => ({ status: resp.status, body })).catch(() => ({ status: resp.status, body: {} })))
 			.then(({ status, body }) => {
 				if (status === 429) {
-					nextFetchAllowed = Math.max(
-						nextFetchAllowed,
-						nowTs() + RATE_LIMIT_BACKOFF_MS,
-					);
+					nextFetchAllowed = Math.max(nextFetchAllowed, nowTs() + RATE_LIMIT_BACKOFF_MS);
 					config.pending.delete(user);
 					queueUser(user);
 					return;
@@ -1365,8 +993,7 @@
 				if (info.accountCountry) {
 					const code = info.accountCountry;
 					if (!config.countryDB[code]) config.countryDB[code] = [];
-					if (!config.countryDB[code].includes(user))
-						config.countryDB[code].push(user);
+					if (!config.countryDB[code].includes(user)) config.countryDB[code].push(user);
 					if (config.blockedCountries.has(code)) scanAndHide();
 				}
 				save();
@@ -1382,75 +1009,41 @@
 	}
 
 	function scanAndHide() {
-		document
-			.querySelectorAll('article[data-testid="tweet"]')
-			.forEach((tweet) => {
-				const userKey = extractUsername(tweet);
-				if (!userKey) return;
-
-				const text =
-					tweet.querySelector('[data-testid="tweetText"]')?.textContent ||
-					tweet.innerText ||
-					"";
-				const langMatch = hasBlockedLang(text);
-				let reason = langMatch ? `Lang:${langMatch}` : "";
-				const userInfo = config.knownUsers[userKey];
-				const accountCountry = userInfo?.accountCountry || null;
-				let countryCode = null;
-				let regionName =
-					userInfo?.accountRegion ||
-					(userInfo?.accountCountry
-						? regionFromCountry(userInfo.accountCountry)
-						: null);
-				if (userInfo?.accountRegion && !regionName)
-					regionName = userInfo.accountRegion;
-				if (
-					userInfo &&
-					accountCountry &&
-					config.blockedCountries.has(accountCountry)
-				) {
-					countryCode = accountCountry;
-					reason = reason
-						? `${reason}+Country`
-						: `Country:${accountCountry}`;
-				}
-				if (regionName && config.blockedRegions.has(regionName)) {
-					reason = reason ? `${reason}+Region` : `Region:${regionName}`;
-				}
-				if (accountCountry || regionName) {
-					recordSeen(accountCountry, regionName, tweet);
-				}
-				if (
-					!userInfo ||
-					(!userInfo.accountCountry &&
-						(!userInfo.ts || nowTs() - userInfo.ts >= UNKNOWN_RETRY_MS))
-				) {
-					queueUser(userKey);
-				}
-				renderFlag(tweet, accountCountry || null);
-				renderFooterInfo(tweet, accountCountry || null, userInfo?.usernameChanges);
-				if (!reason && (tweet.dataset.xcbMode || tweet.dataset.blocked)) {
-					clearFilterMark(tweet);
-				}
-				if (
-					!reason &&
-					config.highlightRegionDisplayOnly &&
-					userInfo?.accountRegion &&
-					!userInfo.accountCountry
-				) {
-					markRegionOnlyHighlight(tweet, regionName || userInfo.accountRegion);
-					return;
-				}
-				if (reason)
-					applyFilterAction(tweet, {
-						reason,
-						countryCode,
-						lang: langMatch,
-						region: config.blockedRegions.has(regionName || "")
-							? regionName || null
-							: null,
-					});
-			});
+		document.querySelectorAll('article[data-testid="tweet"]').forEach((tweet) => {
+			const userKey = extractUsername(tweet);
+			if (!userKey) return;
+			const text = tweet.querySelector('[data-testid="tweetText"]')?.textContent || tweet.innerText || "";
+			const langMatch = hasBlockedLang(text);
+			let reason = langMatch ? `Lang:${langMatch}` : "";
+			const userInfo = config.knownUsers[userKey];
+			const accountCountry = userInfo?.accountCountry || null;
+			let countryCode = null;
+			let regionName = userInfo?.accountRegion || (userInfo?.accountCountry ? regionFromCountry(userInfo.accountCountry) : null);
+			if (userInfo?.accountRegion && !regionName) regionName = userInfo.accountRegion;
+			if (userInfo && accountCountry && config.blockedCountries.has(accountCountry)) {
+				countryCode = accountCountry;
+				reason = reason ? `${reason}+Country` : `Country:${accountCountry}`;
+			}
+			if (regionName && config.blockedRegions.has(regionName)) {
+				reason = reason ? `${reason}+Region` : `Region:${regionName}`;
+			}
+			if (accountCountry || regionName) {
+				recordSeen(accountCountry, regionName, tweet);
+			}
+			if (!userInfo || (!userInfo.accountCountry && (!userInfo.ts || nowTs() - userInfo.ts >= UNKNOWN_RETRY_MS))) {
+				queueUser(userKey);
+			}
+			renderFlag(tweet, accountCountry || null);
+			renderFooterInfo(tweet, accountCountry || null, userInfo?.usernameChanges);
+			if (!reason && (tweet.dataset.xcbMode || tweet.dataset.blocked)) {
+				clearFilterMark(tweet);
+			}
+			if (!reason && config.highlightRegionDisplayOnly && userInfo?.accountRegion && !userInfo.accountCountry) {
+				markRegionOnlyHighlight(tweet, regionName || userInfo.accountRegion);
+				return;
+			}
+			if (reason) applyFilterAction(tweet, { reason, countryCode, lang: langMatch, region: config.blockedRegions.has(regionName || "") ? regionName || null : null });
+		});
 	}
 
 	function processQueue() {
@@ -1462,7 +1055,6 @@
 			if (!needsFetch(user)) continue;
 			const started = fetchCountry(user);
 			if (!started) {
-				// Put it back and wait for the next tick if throttled
 				if (!config.pending.has(user)) fetchQueue.unshift(user);
 				break;
 			}
@@ -1470,18 +1062,17 @@
 		}
 	}
 
-	// Sync removed: keep everything local only.
-
 	function ensureSidebarButton(openModal) {
 		const existing = document.getElementById("xcb-button");
-		const nav = document.querySelector('nav[aria-label="Primary"]');
+		// FIX: Use generic role instead of English aria-label
+		const nav = document.querySelector('nav[role="navigation"]');
 		if (!nav) return false;
-		const homeLink = nav.querySelector('a[aria-label="Home"]');
-		const profileLink = nav.querySelector('a[aria-label="Profile"]');
-		const moreEntry =
-			nav.querySelector('[aria-label="More menu items"]') ||
-			nav.querySelector('[aria-label="More"]') ||
-			nav.querySelector('[data-testid="AppTabBar_More_Menu"]');
+
+		// FIX: Use stable data-testid instead of translated aria-labels
+		const homeLink = nav.querySelector('[data-testid="AppTabBar_Home_Link"]');
+		const profileLink = nav.querySelector('[data-testid="AppTabBar_Profile_Link"]');
+		const moreEntry = nav.querySelector('[data-testid="AppTabBar_More_Menu"]');
+
 		const anchorRef = moreEntry || profileLink || homeLink;
 		if (!anchorRef) return false;
 		const parent = (anchorRef.closest("a, div, button") || anchorRef).parentElement || nav;
@@ -1490,32 +1081,16 @@
 		btn.id = "xcb-button";
 		btn.setAttribute("role", "button");
 		btn.href = "javascript:void(0)";
-		btn.innerHTML =
-			'<span class="xcb-icon" style="font-size:22px;line-height:22px;color:#fff;">🚫</span><span class="xcb-label" style="font-size:18px;font-weight:700;">CleanX</span>';
-		btn.style =
-			"display:flex;align-items:center;gap:14px;padding:12px;border-radius:9999px;color:#e7e9ea;text-decoration:none;font-size:17px;font-weight:700;cursor:pointer;max-width:260px;min-width:52px;box-sizing:border-box;";
-		btn.onmouseenter = () => {
-			btn.style.backgroundColor = "rgba(255,255,255,0.08)";
-		};
-		btn.onmouseleave = () => {
-			btn.style.backgroundColor = "transparent";
-		};
-		btn.onclick = (e) => {
-			e.preventDefault();
-			e.stopPropagation();
-			openModal();
-		};
-		btn.onkeydown = (e) => {
-			if (e.key === "Enter" || e.key === " ") {
-				e.preventDefault();
-				openModal();
-			}
-		};
+		btn.innerHTML = '<span class="xcb-icon" style="font-size:22px;line-height:22px;color:#fff;">🚫</span><span class="xcb-label" style="font-size:18px;font-weight:700;">CleanX</span>';
+		btn.style = "display:flex;align-items:center;gap:14px;padding:12px;border-radius:9999px;color:#e7e9ea;text-decoration:none;font-size:17px;font-weight:700;cursor:pointer;max-width:260px;min-width:52px;box-sizing:border-box;";
+		btn.onmouseenter = () => { btn.style.backgroundColor = "rgba(255,255,255,0.08)"; };
+		btn.onmouseleave = () => { btn.style.backgroundColor = "transparent"; };
+		btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openModal(); };
+		btn.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openModal(); } };
 		const label = btn.querySelector(".xcb-label");
 		const updateLabelVisibility = () => {
 			if (!label) return;
-			label.style.display =
-				(nav.getBoundingClientRect().width || 0) > 80 ? "inline" : "none";
+			label.style.display = (nav.getBoundingClientRect().width || 0) > 80 ? "inline" : "none";
 		};
 		updateLabelVisibility();
 		if (typeof ResizeObserver !== "undefined") {
@@ -1542,8 +1117,7 @@
 		if (document.getElementById("xcb-modal")) return;
 		const modal = document.createElement("div");
 		modal.id = "xcb-modal";
-		modal.style =
-			"display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:10000;align-items:center;justify-content:center;";
+		modal.style = "display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:10000;align-items:center;justify-content:center;";
 		modal.innerHTML = `<div style="background:#15202b;color:#fff;padding:20px;border-radius:12px;max-width:480px;width:92%;max-height:90vh;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,0.35);">
             <h2 style="margin:0 0 16px;text-align:center;">X Country & Language Blocker</h2>
             <div style="font-size:13px;color:#aab8c2;margin-bottom:12px;text-align:center;">Add countries or language scripts to hide or highlight matching posts. Counts show S: this session, T: total (saved).</div>
@@ -1578,33 +1152,20 @@
 
 		updateFilteredDisplay();
 
-		const setStatus = (msg) => {
-			statusLine.textContent = msg || "";
-		};
+		const setStatus = (msg) => { statusLine.textContent = msg || ""; };
 
-		modal
-			.querySelectorAll('input[name="xcb-mode"]')
-			.forEach((input) => {
-				input.checked =
-					input.value ===
-					(config.filterMode === "highlight" ? "highlight" : "block");
-				input.addEventListener("change", () => {
-					if (!input.checked) return;
-					config.filterMode =
-						input.value === "highlight" ? "highlight" : "block";
-					save();
-					setStatus(
-						config.filterMode === "highlight"
-							? "Highlighting filtered posts with flags"
-							: "Blocking filtered posts",
-					);
-					document
-						.querySelectorAll('article[data-testid="tweet"]')
-						.forEach((t) => clearFilterMark(t));
-					safeScan();
-					updateFilteredDisplay();
-				});
+		modal.querySelectorAll('input[name="xcb-mode"]').forEach((input) => {
+			input.checked = input.value === (config.filterMode === "highlight" ? "highlight" : "block");
+			input.addEventListener("change", () => {
+				if (!input.checked) return;
+				config.filterMode = input.value === "highlight" ? "highlight" : "block";
+				save();
+				setStatus(config.filterMode === "highlight" ? "Highlighting filtered posts with flags" : "Blocking filtered posts");
+				document.querySelectorAll('article[data-testid="tweet"]').forEach((t) => clearFilterMark(t));
+				safeScan();
+				updateFilteredDisplay();
 			});
+		});
 
 		const regionOnlyToggle = document.getElementById("xcb-highlight-region-only");
 		if (regionOnlyToggle) {
@@ -1612,17 +1173,9 @@
 			regionOnlyToggle.addEventListener("change", () => {
 				config.highlightRegionDisplayOnly = regionOnlyToggle.checked;
 				save();
-				setStatus(
-					config.highlightRegionDisplayOnly
-						? "Highlighting region-only accounts in yellow"
-						: "Region-only highlighting disabled",
-				);
+				setStatus(config.highlightRegionDisplayOnly ? "Highlighting region-only accounts in yellow" : "Region-only highlighting disabled");
 				if (!config.highlightRegionDisplayOnly) {
-					document
-						.querySelectorAll('article[data-testid="tweet"]')
-						.forEach((t) => {
-							if (t.dataset.xcbMode === "region-only") clearFilterMark(t);
-						});
+					document.querySelectorAll('article[data-testid="tweet"]').forEach((t) => { if (t.dataset.xcbMode === "region-only") clearFilterMark(t); });
 				}
 				safeScan();
 			});
@@ -1635,269 +1188,115 @@
 				if (followScanBtn.disabled) return;
 				followScanBtn.disabled = true;
 				followStatus.textContent = "Starting following analysis…";
-				analyzeFollowing((msg) => {
-					followStatus.textContent = msg;
-				}).finally(() => {
-					followScanBtn.disabled = false;
-				});
+				analyzeFollowing((msg) => { followStatus.textContent = msg; }).finally(() => { followScanBtn.disabled = false; });
 			};
 		}
 
 		const refreshList = () => {
 			const countryList = document.getElementById("list-c");
 			countryList.innerHTML = "";
-			Array.from(config.blockedCountries)
-				.sort()
-				.forEach((c) => {
-					const row = document.createElement("div");
-					row.id = `xcb-c-${c}`;
-					row.style.display = "flex";
-					row.style.justifyContent = "space-between";
-					row.style.padding = "4px 0";
-					row.innerHTML = `<span>${c} <span class="xcb-count" style="color:#aab8c2;">(S:${
-						blockStats.country[c] || 0
-					} | T:${config.filterTotals?.country?.[c] || 0})</span></span><span style="cursor:pointer;color:#f00;">×</span>`;
-					row.lastChild.addEventListener("click", () => {
-						config.blockedCountries.delete(c);
-						save();
-						refreshList();
-						scanAndHide();
-						setStatus(`Removed country ${c}`);
-					});
-					countryList.appendChild(row);
-				});
-
-			const regionList = document.getElementById("list-r");
-			regionList.innerHTML = "";
-			Array.from(config.blockedRegions)
-				.sort()
-				.forEach((r) => {
-					const row = document.createElement("div");
-					row.id = `xcb-r-${r}`;
-					row.style.display = "flex";
-					row.style.justifyContent = "space-between";
-					row.style.padding = "4px 0";
-					row.innerHTML = `<span>${r} <span class="xcb-count" style="color:#aab8c2;">(S:${
-						blockStats.region[r] || 0
-					} | T:${config.filterTotals?.region?.[r] || 0})</span></span><span style="cursor:pointer;color:#f00;">×</span>`;
-					row.lastChild.addEventListener("click", () => {
-						config.blockedRegions.delete(r);
-						save();
-						refreshList();
-						scanAndHide();
-						setStatus(`Removed region ${r}`);
-					});
-					regionList.appendChild(row);
-				});
-
-			const langList = document.getElementById("list-l");
-			langList.innerHTML = "";
-			Array.from(config.blockedLangs)
-				.sort()
-				.forEach((l) => {
-					const row = document.createElement("div");
-					row.id = `xcb-l-${l}`;
-					row.style.display = "flex";
-					row.style.justifyContent = "space-between";
-					row.style.padding = "4px 0";
-					row.innerHTML = `<span>${l} <span class="xcb-count" style="color:#aab8c2;">(S:${
-						blockStats.lang[l] || 0
-					} | T:${config.filterTotals?.lang?.[l] || 0})</span></span><span style="cursor:pointer;color:#f00;">×</span>`;
-					row.lastChild.addEventListener("click", () => {
-						config.blockedLangs.delete(l);
-						save();
-						refreshList();
-						scanAndHide();
-						setStatus(`Removed language ${l}`);
-					});
-					langList.appendChild(row);
-				});
-
-			const analyticsDiv = document.getElementById("xcb-analytics");
-			if (analyticsDiv) {
-				const topCountries = Object.entries(
-					config.analytics?.seenCountry || {},
-				)
-					.sort((a, b) => b[1] - a[1])
-					.slice(0, 8)
-					.map(
-						([code, count]) =>
-							`${countryCodeToFlag(code) || ""} ${code} (${count})`,
-					)
-					.join(", ");
-				const topRegions = Object.entries(config.analytics?.seenRegion || {})
-					.sort((a, b) => b[1] - a[1])
-					.slice(0, 6)
-					.map(([name, count]) => `${name} (${count})`)
-					.join(", ");
-				analyticsDiv.innerHTML = `<div style="margin-top:6px;">Seen (total): ${
-					config.analytics?.seenTotal || 0
-				}</div><div style="margin-top:4px;">Top countries: ${
-					topCountries || "—"
-				}</div><div style="margin-top:4px;">Top regions: ${
-					topRegions || "—"
-				}</div>`;
-			}
-		};
-
-		const openModal = () => {
-			modal.style.display = "flex";
-			refreshList();
-			updateFilteredDisplay();
-		};
-		const closeModal = () => (modal.style.display = "none");
-
-		const placeButton = () => {
-			if (!ensureSidebarButton(openModal)) setTimeout(placeButton, 700);
-		};
-		placeButton();
-		modal.addEventListener("click", (e) => {
-			if (e.target === modal) closeModal();
-		});
-		document.addEventListener("keydown", (e) => {
-			if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
-				e.preventDefault();
-				openModal();
-			}
-			if (e.key === "Escape") closeModal();
-		});
-		document.getElementById("close").onclick = () => closeModal();
-		document.getElementById("export-db").onclick = () => {
-			setStatus("DB exported to console");
-			console.log("XCB DB", exportDB());
-		};
-		document.getElementById("add-c").onkeydown = (e) => {
-			if (e.key === "Enter") {
-				const v = e.target.value.trim();
-				const code = resolveCountryCode(v);
-				if (!code) {
-					setStatus(
-						`Could not resolve "${v}". Try a 2-letter code or country name.`,
-					);
-					return;
-				}
-				config.blockedCountries.add(code);
-				save();
-				refreshList();
-				scanAndHide();
-				setStatus(`Added country ${code}`);
-				e.target.value = "";
-			}
-		};
-		document.getElementById("add-l").onkeydown = (e) => {
-			if (e.key === "Enter") {
-				const v = e.target.value.trim().toLowerCase();
-				if (v) {
-					config.blockedLangs.add(v);
+			Array.from(config.blockedCountries).sort().forEach((c) => {
+				const row = document.createElement("div");
+				row.id = `xcb-c-${c}`;
+				row.style.display = "flex";
+				row.style.justifyContent = "space-between";
+				row.style.padding = "4px 0";
+				row.innerHTML = `<span>${c} <span class="xcb-count" style="color:#aab8c2;">(S:${blockStats.country[c] || 0} | T:${config.filterTotals?.country?.[c] || 0})</span></span><span style="cursor:pointer;color:#f00;">×</span>`;
+				row.lastChild.addEventListener("click", () => {
+					config.blockedCountries.delete(c);
 					save();
 					refreshList();
 					scanAndHide();
-					setStatus(`Added language ${v}`);
-					e.target.value = "";
-				}
+					setStatus(`Removed country ${c}`);
+				});
+				countryList.appendChild(row);
+			});
+
+			const regionList = document.getElementById("list-r");
+			regionList.innerHTML = "";
+			Array.from(config.blockedRegions).sort().forEach((r) => {
+				const row = document.createElement("div");
+				row.id = `xcb-r-${r}`;
+				row.style.display = "flex";
+				row.style.justifyContent = "space-between";
+				row.style.padding = "4px 0";
+				row.innerHTML = `<span>${r} <span class="xcb-count" style="color:#aab8c2;">(S:${blockStats.region[r] || 0} | T:${config.filterTotals?.region?.[r] || 0})</span></span><span style="cursor:pointer;color:#f00;">×</span>`;
+				row.lastChild.addEventListener("click", () => {
+					config.blockedRegions.delete(r);
+					save();
+					refreshList();
+					scanAndHide();
+					setStatus(`Removed region ${r}`);
+				});
+				regionList.appendChild(row);
+			});
+
+			const langList = document.getElementById("list-l");
+			langList.innerHTML = "";
+			Array.from(config.blockedLangs).sort().forEach((l) => {
+				const row = document.createElement("div");
+				row.id = `xcb-l-${l}`;
+				row.style.display = "flex";
+				row.style.justifyContent = "space-between";
+				row.style.padding = "4px 0";
+				row.innerHTML = `<span>${l} <span class="xcb-count" style="color:#aab8c2;">(S:${blockStats.lang[l] || 0} | T:${config.filterTotals?.lang?.[l] || 0})</span></span><span style="cursor:pointer;color:#f00;">×</span>`;
+				row.lastChild.addEventListener("click", () => {
+					config.blockedLangs.delete(l);
+					save();
+					refreshList();
+					scanAndHide();
+					setStatus(`Removed language ${l}`);
+				});
+				langList.appendChild(row);
+			});
+
+			const analyticsDiv = document.getElementById("xcb-analytics");
+			if (analyticsDiv) {
+				const topCountries = Object.entries(config.analytics?.seenCountry || {}).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([code, count]) => `${countryCodeToFlag(code) || ""} ${code} (${count})`).join(", ");
+				const topRegions = Object.entries(config.analytics?.seenRegion || {}).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, count]) => `${name} (${count})`).join(", ");
+				analyticsDiv.innerHTML = `<div style="margin-top:6px;">Seen (total): ${config.analytics?.seenTotal || 0}</div><div style="margin-top:4px;">Top countries: ${topCountries || "—"}</div><div style="margin-top:4px;">Top regions: ${topRegions || "—"}</div>`;
 			}
 		};
-		document.getElementById("add-r").onkeydown = (e) => {
-			if (e.key === "Enter") {
-				const v = e.target.value.trim();
-				const resolved = resolveRegionName(v);
-				if (!resolved) {
-					setStatus(`Unknown region "${v}". Try a listed region name.`);
-					return;
-				}
-				config.blockedRegions.add(resolved);
-				save();
-				refreshList();
-				scanAndHide();
-				setStatus(`Added region ${resolved}`);
-				e.target.value = "";
-			}
-		};
+
+		const openModal = () => { modal.style.display = "flex"; refreshList(); updateFilteredDisplay(); };
+		const closeModal = () => (modal.style.display = "none");
+
+		const placeButton = () => { if (!ensureSidebarButton(openModal)) setTimeout(placeButton, 700); };
+		placeButton();
+		modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+		document.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") { e.preventDefault(); openModal(); } if (e.key === "Escape") closeModal(); });
+		document.getElementById("close").onclick = () => closeModal();
+		document.getElementById("export-db").onclick = () => { setStatus("DB exported to console"); console.log("XCB DB", exportDB()); };
+		document.getElementById("add-c").onkeydown = (e) => { if (e.key === "Enter") { const v = e.target.value.trim(); const code = resolveCountryCode(v); if (!code) { setStatus(`Could not resolve "${v}". Try a 2-letter code or country name.`); return; } config.blockedCountries.add(code); save(); refreshList(); scanAndHide(); setStatus(`Added country ${code}`); e.target.value = ""; } };
+		document.getElementById("add-l").onkeydown = (e) => { if (e.key === "Enter") { const v = e.target.value.trim().toLowerCase(); if (v) { config.blockedLangs.add(v); save(); refreshList(); scanAndHide(); setStatus(`Added language ${v}`); e.target.value = ""; } } };
+		document.getElementById("add-r").onkeydown = (e) => { if (e.key === "Enter") { const v = e.target.value.trim(); const resolved = resolveRegionName(v); if (!resolved) { setStatus(`Unknown region "${v}". Try a listed region name.`); return; } config.blockedRegions.add(resolved); save(); refreshList(); scanAndHide(); setStatus(`Added region ${resolved}`); e.target.value = ""; } };
 	}
 
 	function start() {
 		const target = document.body || document.documentElement;
-		if (!target) {
-			document.addEventListener("DOMContentLoaded", start, { once: true });
-			return;
-		}
-		const observer = new MutationObserver(() => {
-			safeScan();
-		});
+		if (!target) { document.addEventListener("DOMContentLoaded", start, { once: true }); return; }
+		const observer = new MutationObserver(() => { safeScan(); });
 		observer.observe(target, { childList: true, subtree: true });
 		setInterval(safeScan, 4000);
 		setInterval(processQueue, PREFETCH_INTERVAL_MS);
-		setTimeout(() => {
-			safeScan();
-			processQueue();
-			injectUI();
-		}, 1500);
+		setTimeout(() => { safeScan(); processQueue(); injectUI(); }, 1500);
 	}
 
 	function safeScan() {
-		try {
-			scanAndHide();
-			scanChatFlags();
-		} catch (e) {
-			console.error("scan error", e);
-		}
+		try { scanAndHide(); scanChatFlags(); } catch (e) { console.error("scan error", e); }
+	}
+
+    // Corrected placement of flagPalette (inside the closure)
+	function flagPalette(code) {
+		const c = (code || "").toUpperCase();
+		const table = {
+			US: { primary: "#b22234", secondary: "#3c3b6e" }, CA: { primary: "#d52b1e", secondary: "#ffffff" }, GB: { primary: "#c8102e", secondary: "#012169" }, FR: { primary: "#0055a4", secondary: "#ef4135" }, DE: { primary: "#000000", secondary: "#d00" }, IT: { primary: "#009246", secondary: "#ce2b37" }, ES: { primary: "#aa151b", secondary: "#f1bf00" }, NL: { primary: "#ae1c28", secondary: "#21468b" }, SE: { primary: "#006aa7", secondary: "#fecc00" }, NO: { primary: "#ba0c2f", secondary: "#00205b" }, FI: { primary: "#003580", secondary: "#ffffff" }, DK: { primary: "#c8102e", secondary: "#ffffff" }, RU: { primary: "#0039a6", secondary: "#d52b1e" }, UA: { primary: "#0057b7", secondary: "#ffd700" }, PL: { primary: "#dc143c", secondary: "#ffffff" }, CN: { primary: "#de2910", secondary: "#ffde00" }, JP: { primary: "#ffffff", secondary: "#bc002d" }, KR: { primary: "#003478", secondary: "#c60c30" }, AU: { primary: "#00247d", secondary: "#ff0000" }, NZ: { primary: "#00247d", secondary: "#ff0000" }, BR: { primary: "#009c3b", secondary: "#ffdf00" }, MX: { primary: "#006341", secondary: "#ce1126" }, AR: { primary: "#74acdf", secondary: "#f6b40e" }, IN: { primary: "#ff9933", secondary: "#128807" }, SA: { primary: "#006c35", secondary: "#ffffff" }, IL: { primary: "#0038b8", secondary: "#ffffff" }, IR: { primary: "#239f40", secondary: "#da0000" }, TR: { primary: "#e30a17", secondary: "#ffffff" }, ZA: { primary: "#007749", secondary: "#ffb612" }, NG: { primary: "#008753", secondary: "#ffffff" }, KE: { primary: "#006600", secondary: "#b22222" }, EG: { primary: "#ce1126", secondary: "#000000" }, ID: { primary: "#ce1126", secondary: "#ffffff" }, PH: { primary: "#0038a8", secondary: "#ce1126" }, SG: { primary: "#e0001b", secondary: "#ffffff" }, TH: { primary: "#2d2a4a", secondary: "#a51931" }, VN: { primary: "#da251d", secondary: "#ffde00" },
+		};
+		const entry = table[c] || table[(c || "").slice(0, 2)] || { primary: "#ff4d4f", secondary: "#ffffff" };
+		return { primary: entry.primary, secondary: entry.secondary, shadow: `${entry.primary}55`, background: `${entry.secondary}1f` };
 	}
 
 	Promise.all([loadKnownFromDB(), loadTotalsFromDB()]).finally(() => start());
 
-	console.log(
-		"X Country Blocker v5.1 (CLEAN) ready — nothing blocked until you add it",
-	);
+	console.log("X Country Blocker v5.2 (Universal) ready");
 })();
-	function flagPalette(code) {
-		const c = (code || "").toUpperCase();
-		const table = {
-			US: { primary: "#b22234", secondary: "#3c3b6e" },
-			CA: { primary: "#d52b1e", secondary: "#ffffff" },
-			GB: { primary: "#c8102e", secondary: "#012169" },
-			FR: { primary: "#0055a4", secondary: "#ef4135" },
-			DE: { primary: "#000000", secondary: "#d00" },
-			IT: { primary: "#009246", secondary: "#ce2b37" },
-			ES: { primary: "#aa151b", secondary: "#f1bf00" },
-			NL: { primary: "#ae1c28", secondary: "#21468b" },
-			SE: { primary: "#006aa7", secondary: "#fecc00" },
-			NO: { primary: "#ba0c2f", secondary: "#00205b" },
-			FI: { primary: "#003580", secondary: "#ffffff" },
-			DK: { primary: "#c8102e", secondary: "#ffffff" },
-			RU: { primary: "#0039a6", secondary: "#d52b1e" },
-			UA: { primary: "#0057b7", secondary: "#ffd700" },
-			PL: { primary: "#dc143c", secondary: "#ffffff" },
-			CN: { primary: "#de2910", secondary: "#ffde00" },
-			JP: { primary: "#ffffff", secondary: "#bc002d" },
-			KR: { primary: "#003478", secondary: "#c60c30" },
-			AU: { primary: "#00247d", secondary: "#ff0000" },
-			NZ: { primary: "#00247d", secondary: "#ff0000" },
-			BR: { primary: "#009c3b", secondary: "#ffdf00" },
-			MX: { primary: "#006341", secondary: "#ce1126" },
-			AR: { primary: "#74acdf", secondary: "#f6b40e" },
-			IN: { primary: "#ff9933", secondary: "#128807" },
-			SA: { primary: "#006c35", secondary: "#ffffff" },
-			IL: { primary: "#0038b8", secondary: "#ffffff" },
-			IR: { primary: "#239f40", secondary: "#da0000" },
-			TR: { primary: "#e30a17", secondary: "#ffffff" },
-			ZA: { primary: "#007749", secondary: "#ffb612" },
-			NG: { primary: "#008753", secondary: "#ffffff" },
-			KE: { primary: "#006600", secondary: "#b22222" },
-			EG: { primary: "#ce1126", secondary: "#000000" },
-			ID: { primary: "#ce1126", secondary: "#ffffff" },
-			PH: { primary: "#0038a8", secondary: "#ce1126" },
-			SG: { primary: "#e0001b", secondary: "#ffffff" },
-			TH: { primary: "#2d2a4a", secondary: "#a51931" },
-			VN: { primary: "#da251d", secondary: "#ffde00" },
-		};
-		const entry = table[c] || table[(c || "").slice(0, 2)] || {
-			primary: "#ff4d4f",
-			secondary: "#ffffff",
-		};
-		return {
-			primary: entry.primary,
-			secondary: entry.secondary,
-			shadow: `${entry.primary}55`,
-			background: `${entry.secondary}1f`,
-		};
-	}
