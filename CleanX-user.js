@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         X Country Blocker - Clean Start (Universal Language)
+// @name         X Country Blocker - Interface PT-BR com Dropdowns
 // @namespace    http://tampermonkey.net/
-// @version      5.2
-// @description  Block by country & language. Works in any language (PT-BR supported).
-// @author       A Pleasant Experience
+// @version      5.3
+// @description  Bloqueie ou destaque por país, região e idioma. Interface em Português com listas de seleção.
+// @author       A Pleasant Experience & Gemini
 // @match        https://x.com/*
 // @match        https://twitter.com/*
 // @grant        GM_xmlhttpRequest
@@ -76,126 +76,22 @@
 	};
 
 	const COUNTRY_MAP = {
-		Afghanistan: "AF",
-		Albania: "AL",
-		Algeria: "DZ",
-		Andorra: "AD",
-		Angola: "AO",
-		Argentina: "AR",
-		Armenia: "AM",
-		Australia: "AU",
-		Austria: "AT",
-		Azerbaijan: "AZ",
-		Bahamas: "BS",
-		Bahrain: "BH",
-		Bangladesh: "BD",
-		Barbados: "BB",
-		Belarus: "BY",
-		Belgium: "BE",
-		Belize: "BZ",
-		Benin: "BJ",
-		Bhutan: "BT",
-		Bolivia: "BO",
-		"Bosnia and Herzegovina": "BA",
-		Botswana: "BW",
-		Brazil: "BR",
-		Bulgaria: "BG",
-		"Burkina Faso": "BF",
-		Burundi: "BI",
-		Cambodia: "KH",
-		Cameroon: "CM",
-		Canada: "CA",
-		Chile: "CL",
-		China: "CN",
-		Colombia: "CO",
-		"Costa Rica": "CR",
-		Croatia: "HR",
-		Cuba: "CU",
-		Cyprus: "CY",
-		Czechia: "CZ",
-		Denmark: "DK",
-		"Dominican Republic": "DO",
-		Ecuador: "EC",
-		Egypt: "EG",
-		"El Salvador": "SV",
-		Estonia: "EE",
-		Ethiopia: "ET",
-		Finland: "FI",
-		France: "FR",
-		Georgia: "GE",
-		Germany: "DE",
-		Ghana: "GH",
-		Greece: "GR",
-		Guatemala: "GT",
-		Honduras: "HN",
-		Hungary: "HU",
-		Iceland: "IS",
-		India: "IN",
-		Indonesia: "ID",
-		Iran: "IR",
-		Iraq: "IQ",
-		Ireland: "IE",
-		Israel: "IL",
-		Italy: "IT",
-		Jamaica: "JM",
-		Japan: "JP",
-		Jordan: "JO",
-		Kazakhstan: "KZ",
-		Kenya: "KE",
-		Kuwait: "KW",
-		Latvia: "LV",
-		Lebanon: "LB",
-		Libya: "LY",
-		Lithuania: "LT",
-		Luxembourg: "LU",
-		Madagascar: "MG",
-		Malaysia: "MY",
-		Maldives: "MV",
-		Mexico: "MX",
-		Monaco: "MC",
-		Morocco: "MA",
-		Nepal: "NP",
-		Netherlands: "NL",
-		"New Zealand": "NZ",
-		Nigeria: "NG",
-		Norway: "NO",
-		Oman: "OM",
-		Pakistan: "PK",
-		Panama: "PA",
-		Paraguay: "PY",
-		Peru: "PE",
-		Philippines: "PH",
-		Poland: "PL",
-		Portugal: "PT",
-		Qatar: "QA",
-		Romania: "RO",
-		Russia: "RU",
-		"Saudi Arabia": "SA",
-		Senegal: "SN",
-		Serbia: "RS",
-		Singapore: "SG",
-		Slovakia: "SK",
-		Slovenia: "SI",
-		"South Africa": "ZA",
-		"South Korea": "KR",
-		Spain: "ES",
-		"Sri Lanka": "LK",
-		Sweden: "SE",
-		Switzerland: "CH",
-		Taiwan: "TW",
-		Thailand: "TH",
-		Tunisia: "TN",
-		Turkey: "TR",
-		Ukraine: "UA",
-		"United Arab Emirates": "AE",
-		"United Kingdom": "GB",
-		"United States": "US",
-		Uruguay: "UY",
-		Venezuela: "VE",
-		Vietnam: "VN",
-		Yemen: "YE",
-		Zimbabwe: "ZW",
+		Afghanistan: "AF", Albania: "AL", Algeria: "DZ", Andorra: "AD", Angola: "AO", Argentina: "AR", Armenia: "AM", Australia: "AU", Austria: "AT", Azerbaijan: "AZ", Bahamas: "BS", Bahrain: "BH", Bangladesh: "BD", Barbados: "BB", Belarus: "BY", Belgium: "BE", Belize: "BZ", Benin: "BJ", Bhutan: "BT", Bolivia: "BO", "Bosnia and Herzegovina": "BA", Botswana: "BW", Brazil: "BR", Bulgaria: "BG", "Burkina Faso": "BF", Burundi: "BI", Cambodia: "KH", Cameroon: "CM", Canada: "CA", Chile: "CL", China: "CN", Colombia: "CO", "Costa Rica": "CR", Croatia: "HR", Cuba: "CU", Cyprus: "CY", Czechia: "CZ", Denmark: "DK", "Dominican Republic": "DO", Ecuador: "EC", Egypt: "EG", "El Salvador": "SV", Estonia: "EE", Ethiopia: "ET", Finland: "FI", France: "FR", Georgia: "GE", Germany: "DE", Ghana: "GH", Greece: "GR", Guatemala: "GT", Honduras: "HN", Hungary: "HU", Iceland: "IS", India: "IN", Indonesia: "ID", Iran: "IR", Iraq: "IQ", Ireland: "IE", Israel: "IL", Italy: "IT", Jamaica: "JM", Japan: "JP", Jordan: "JO", Kazakhstan: "KZ", Kenya: "KE", Kuwait: "KW", Latvia: "LV", Lebanon: "LB", Libya: "LY", Lithuania: "LT", Luxembourg: "LU", Madagascar: "MG", Malaysia: "MY", Maldives: "MV", Mexico: "MX", Monaco: "MC", Morocco: "MA", Nepal: "NP", Netherlands: "NL", "New Zealand": "NZ", Nigeria: "NG", Norway: "NO", Oman: "OM", Pakistan: "PK", Panama: "PA", Paraguay: "PY", Peru: "PE", Philippines: "PH", Poland: "PL", Portugal: "PT", Qatar: "QA", Romania: "RO", Russia: "RU", "Saudi Arabia": "SA", Senegal: "SN", Serbia: "RS", Singapore: "SG", Slovakia: "SK", Slovenia: "SI", "South Africa": "ZA", "South Korea": "KR", Spain: "ES", "Sri Lanka": "LK", Sweden: "SE", Switzerland: "CH", Taiwan: "TW", Thailand: "TH", Tunisia: "TN", Turkey: "TR", Ukraine: "UA", "United Arab Emirates": "AE", "United Kingdom": "GB", "United States": "US", Uruguay: "UY", Venezuela: "VE", Vietnam: "VN", Yemen: "YE", Zimbabwe: "ZW",
 	};
+
+    const LANG_NAMES = {
+        hi: "Hindi (hi)",
+        ta: "Tamil (ta)",
+        te: "Telugu (te)",
+        kn: "Kannada (kn)",
+        ml: "Malayalam (ml)",
+        he: "Hebrew (he)",
+        ur: "Urdu (ur)",
+        pa: "Punjabi (pa)",
+        ar: "Arabic (ar)",
+        fa: "Persian (fa)",
+        ps: "Pashto (ps)"
+    };
 
 	const LANG_SCRIPTS = {
 		hi: /[\u0900-\u097F]/,
@@ -212,50 +108,17 @@
 	};
 
 	const REGION_DEFS = [
-		{
-			name: "Africa",
-			codes: ["DZ","AO","BJ","BW","BF","BI","CM","CV","CF","TD","KM","CG","CD","DJ","EG","GQ","ER","ET","GA","GM","GH","GN","GW","CI","KE","LS","LR","LY","MG","MW","ML","MR","MU","MA","MZ","NA","NE","NG","RE","RW","ST","SN","SC","SL","SO","ZA","SS","SD","SZ","TZ","TG","TN","UG","YT","ZM","ZW"],
-		},
-		{
-			name: "Middle East and North Africa",
-			codes: ["IR","IQ","IL","JO","LB","SA","AE","QA","BH","KW","EG","MA","DZ","TN","LY","TR","OM","YE","SY","PS"],
-		},
-		{
-			name: "South Asia",
-			codes: ["IN", "PK", "BD", "LK", "NP", "AF", "MV", "BT"],
-		},
-		{
-			name: "Southeast Asia",
-			codes: ["SG", "TH", "VN", "MY", "ID", "PH", "KH", "LA", "MM", "BN"],
-		},
-		{
-			name: "East Asia and Pacific",
-			codes: ["CN","JP","KR","TW","PH","ID","TH","VN","MY","SG","AU","NZ","HK","MO","PG","FJ"],
-		},
-		{
-			name: "Latin America",
-			codes: ["MX","BR","AR","CL","CO","PE","VE","UY","PY","BO","CR","PA","DO","HN","GT","SV","CU","EC","PR","JM","TT","NI"],
-		},
-		{
-			name: "South America",
-			codes: ["AR", "BR", "CL", "CO", "PE", "VE", "UY", "PY", "BO", "EC", "GY", "SR"],
-		},
-		{
-			name: "Eastern Europe",
-			codes: ["RU","UA","LV","RO","PL","HU","BG","CZ","SK","SI","RS","HR","BA","BY","LT","EE","MD","GE"],
-		},
-		{
-			name: "Western Europe",
-			codes: ["GB","FR","DE","ES","PT","IT","NL","BE","CH","AT","IE","NO","SE","DK","FI","LU","GR"],
-		},
-		{
-			name: "Europe",
-			codes: ["GB","FR","DE","ES","PT","IT","NL","BE","CH","AT","IE","NO","SE","DK","FI","LU","CZ","PL","HU","RO","BG","RS","HR","SI","SK","UA","LT","LV","EE","GR","MD","GE"],
-		},
-		{
-			name: "North America",
-			codes: ["US", "CA", "MX"],
-		},
+		{ name: "Africa", codes: ["DZ","AO","BJ","BW","BF","BI","CM","CV","CF","TD","KM","CG","CD","DJ","EG","GQ","ER","ET","GA","GM","GH","GN","GW","CI","KE","LS","LR","LY","MG","MW","ML","MR","MU","MA","MZ","NA","NE","NG","RE","RW","ST","SN","SC","SL","SO","ZA","SS","SD","SZ","TZ","TG","TN","UG","YT","ZM","ZW"] },
+		{ name: "Middle East and North Africa", codes: ["IR","IQ","IL","JO","LB","SA","AE","QA","BH","KW","EG","MA","DZ","TN","LY","TR","OM","YE","SY","PS"] },
+		{ name: "South Asia", codes: ["IN", "PK", "BD", "LK", "NP", "AF", "MV", "BT"] },
+		{ name: "Southeast Asia", codes: ["SG", "TH", "VN", "MY", "ID", "PH", "KH", "LA", "MM", "BN"] },
+		{ name: "East Asia and Pacific", codes: ["CN","JP","KR","TW","PH","ID","TH","VN","MY","SG","AU","NZ","HK","MO","PG","FJ"] },
+		{ name: "Latin America", codes: ["MX","BR","AR","CL","CO","PE","VE","UY","PY","BO","CR","PA","DO","HN","GT","SV","CU","EC","PR","JM","TT","NI"] },
+		{ name: "South America", codes: ["AR", "BR", "CL", "CO", "PE", "VE", "UY", "PY", "BO", "EC", "GY", "SR"] },
+		{ name: "Eastern Europe", codes: ["RU","UA","LV","RO","PL","HU","BG","CZ","SK","SI","RS","HR","BA","BY","LT","EE","MD","GE"] },
+		{ name: "Western Europe", codes: ["GB","FR","DE","ES","PT","IT","NL","BE","CH","AT","IE","NO","SE","DK","FI","LU","GR"] },
+		{ name: "Europe", codes: ["GB","FR","DE","ES","PT","IT","NL","BE","CH","AT","IE","NO","SE","DK","FI","LU","CZ","PL","HU","RO","BG","RS","HR","SI","SK","UA","LT","LV","EE","GR","MD","GE"] },
+		{ name: "North America", codes: ["US", "CA", "MX"] },
 	];
 
 	function load() {
@@ -543,10 +406,10 @@
 		if (hasCountry) {
 			const flag = countryCodeToFlag(countryCode) || countryCode;
 			const fullName = Object.keys(COUNTRY_MAP).find((name) => COUNTRY_MAP[name] === countryCode) || countryCode;
-			parts.push(`Country: ${flag} ${fullName}`);
+			parts.push(`País: ${flag} ${fullName}`);
 		}
 		if (hasChanges) {
-			parts.push(`Username changes: ${usernameChanges}`);
+			parts.push(`Mudanças de user: ${usernameChanges}`);
 		}
 		const content = parts.join(" · ");
 		if (!content) return;
@@ -634,7 +497,7 @@
 
 	async function analyzeFollowing(updateStatus) {
 		try {
-			updateStatus("Fetching following list…");
+			updateStatus("Obtendo lista de seguindo...");
 			let cursor = null;
 			const users = [];
 			do {
@@ -642,7 +505,7 @@
 				users.push(...page);
 				cursor = next && next !== "0" ? next : null;
 			} while (cursor && users.length < FOLLOW_SCAN_MAX);
-			updateStatus(`Fetched ${users.length} accounts. Resolving countries…`);
+			updateStatus(`Obtidos ${users.length} perfis. Verificando países...`);
 
 			const summary = {};
 			for (let i = 0; i < users.length; i += 1) {
@@ -655,7 +518,7 @@
 				if (!country) continue;
 				if (!summary[country]) summary[country] = [];
 				if (!summary[country].includes(u)) summary[country].push(u);
-				updateStatus(`Resolved ${i + 1}/${users.length}… (${country} ${countryCodeToFlag(country) || ""})`);
+				updateStatus(`Resolvido ${i + 1}/${users.length}… (${country} ${countryCodeToFlag(country) || ""})`);
 			}
 
 			const reportDiv = document.getElementById("xcb-following-report");
@@ -663,12 +526,12 @@
 				const entries = Object.entries(summary).sort((a, b) => b[1].length - a[1].length);
 				reportDiv.innerHTML = entries.map(([code, list]) =>
 					`<div style="margin:4px 0;"><strong>${countryCodeToFlag(code) || ""} ${Object.keys(COUNTRY_MAP).find((name) => COUNTRY_MAP[name] === code) || code}</strong> (${list.length}): ${list.slice(0, 30).map((u) => `<a href="https://x.com/${u}" target="_blank" rel="noopener noreferrer" style="color:#1d9bf0;text-decoration:none;">@${u}</a>`).join(", ")}${list.length > 30 ? "…" : ""}</div>`
-				).join("") || "No countries resolved.";
+				).join("") || "Nenhum país resolvido.";
 			}
-			updateStatus("Following analysis complete.");
+			updateStatus("Análise completa.");
 		} catch (e) {
 			console.error("[XCB] analyzeFollowing failed", e);
-			updateStatus("Following analysis failed; see console.");
+			updateStatus("Falha na análise; veja o console.");
 		}
 	}
 
@@ -712,7 +575,7 @@
 	function updateFilteredDisplay() {
 		const counterEl = document.getElementById("xcb-blocked-count");
 		if (counterEl)
-			counterEl.textContent = `Filtered this session: ${filteredCount} (${config.filterMode === "highlight" ? "highlight" : "block"}) | Total: ${config.filterTotals?.overall || 0}`;
+			counterEl.textContent = `Filtrados nesta sessão: ${filteredCount} (${config.filterMode === "highlight" ? "destacar" : "bloquear"}) | Total: ${config.filterTotals?.overall || 0}`;
 	}
 
 	function clearFilterMark(tweet) {
@@ -762,7 +625,7 @@
 		const box = document.createElement("div");
 		const noteId = `xcb-note-${Math.random().toString(36).slice(2, 9)}`;
 		box.id = noteId;
-		box.textContent = `Blocked: ${reason}`;
+		box.textContent = `Bloqueado: ${reason}`;
 		box.style = "background:#000;color:#fff;padding:4px 8px;font-size:11px;border-radius:4px;margin:8px 0;";
 		tweet.parentNode?.insertBefore(box, tweet);
 		tweet.dataset.xcbNoteId = noteId;
@@ -813,7 +676,7 @@
 		const badge = document.createElement("div");
 		const badgeId = `xcb-badge-${Math.random().toString(36).slice(2, 9)}`;
 		badge.id = badgeId;
-		badge.textContent = `Region-only: ${regionName}`;
+		badge.textContent = `Apenas Região: ${regionName}`;
 		badge.style = "position:absolute;top:-10px;left:-10px;background:#f5c400;color:#1c1c1c;padding:6px 10px;border-radius:10px;font-size:12px;font-weight:bold;box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:2;";
 		tweet.appendChild(badge);
 		tweet.dataset.xcbBadgeId = badgeId;
@@ -1064,11 +927,9 @@
 
 	function ensureSidebarButton(openModal) {
 		const existing = document.getElementById("xcb-button");
-		// FIX: Use generic role instead of English aria-label
 		const nav = document.querySelector('nav[role="navigation"]');
 		if (!nav) return false;
 
-		// FIX: Use stable data-testid instead of translated aria-labels
 		const homeLink = nav.querySelector('[data-testid="AppTabBar_Home_Link"]');
 		const profileLink = nav.querySelector('[data-testid="AppTabBar_Profile_Link"]');
 		const moreEntry = nav.querySelector('[data-testid="AppTabBar_More_Menu"]');
@@ -1119,29 +980,41 @@
 		modal.id = "xcb-modal";
 		modal.style = "display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:10000;align-items:center;justify-content:center;";
 		modal.innerHTML = `<div style="background:#15202b;color:#fff;padding:20px;border-radius:12px;max-width:480px;width:92%;max-height:90vh;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,0.35);">
-            <h2 style="margin:0 0 16px;text-align:center;">X Country & Language Blocker</h2>
-            <div style="font-size:13px;color:#aab8c2;margin-bottom:12px;text-align:center;">Add countries or language scripts to hide or highlight matching posts. Counts show S: this session, T: total (saved).</div>
+            <h2 style="margin:0 0 16px;text-align:center;">Bloqueador de Países e Idiomas do X</h2>
+            <div style="font-size:13px;color:#aab8c2;margin-bottom:12px;text-align:center;">Adicione países ou idiomas para ocultar ou destacar posts. Contagens: S (Sessão), T (Total).</div>
             <div style="margin:10px 0 14px;">
-              <strong>Filtered post behavior</strong>
+              <strong>Comportamento do Filtro</strong>
               <div id="xcb-mode-row" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;font-size:13px;">
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="xcb-mode" value="block" style="transform:scale(1.1);"> Block (hide)</label>
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="xcb-mode" value="highlight" style="transform:scale(1.1);"> Highlight with flag</label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="xcb-mode" value="block" style="transform:scale(1.1);"> Bloquear (ocultar)</label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="xcb-mode" value="highlight" style="transform:scale(1.1);"> Destacar com bandeira</label>
               </div>
             </div>
-            <strong>Countries</strong><div id="list-c" style="max-height:200px;overflow:auto;margin:8px 0;padding:8px;background:#0002;border-radius:8px;"></div>
-            <input id="add-c" placeholder="Add country (e.g. Israel or IL)" style="width:100%;padding:8px;margin:8px 0;border-radius:8px;">
-            <strong>Regions</strong><div id="list-r" style="max-height:200px;overflow:auto;margin:8px 0;padding:8px;background:#0002;border-radius:8px;"></div>
-            <input id="add-r" placeholder="Add region (e.g. Middle East and North Africa)" style="width:100%;padding:8px;margin:8px 0;border-radius:8px;">
-            <strong>Languages</strong><div id="list-l" style="max-height:200px;overflow:auto;margin:8px 0;padding:8px;background:#0002;border-radius:8px;"></div>
-            <input id="add-l" placeholder="Add language (e.g. ar)" style="width:100%;padding:8px;margin:8px 0;border-radius:8px;">
-            <div id="xcb-blocked-count" style="margin:8px 0;font-size:13px;color:#d9d9d9;">Filtered this session: 0</div>
-            <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:6px 0;"><input type="checkbox" id="xcb-highlight-region-only"> Highlight accounts showing region-only (yellow)</label>
-            <div id="xcb-analytics" style="margin:10px 0;font-size:13px;color:#aab8c2;">Seen stats loading…</div>
-            <button id="xcb-following-scan" style="width:100%;padding:10px;background:#273340;border:none;border-radius:8px;color:#fff;margin-top:8px;cursor:pointer;">Analyze Following (country breakdown)</button>
+            <strong>Países</strong><div id="list-c" style="max-height:200px;overflow:auto;margin:8px 0;padding:8px;background:#0002;border-radius:8px;"></div>
+            <div style="display:flex;gap:8px;margin:8px 0;">
+                <select id="select-c" style="flex:1;padding:8px;border-radius:8px;background:#273340;color:#fff;border:none;"><option value="">Selecione um País...</option></select>
+                <button id="btn-add-c" style="padding:8px 16px;border-radius:8px;background:#1d9bf0;color:#fff;border:none;cursor:pointer;font-weight:bold;">Adicionar</button>
+            </div>
+
+            <strong>Regiões</strong><div id="list-r" style="max-height:200px;overflow:auto;margin:8px 0;padding:8px;background:#0002;border-radius:8px;"></div>
+            <div style="display:flex;gap:8px;margin:8px 0;">
+                <select id="select-r" style="flex:1;padding:8px;border-radius:8px;background:#273340;color:#fff;border:none;"><option value="">Selecione uma Região...</option></select>
+                <button id="btn-add-r" style="padding:8px 16px;border-radius:8px;background:#1d9bf0;color:#fff;border:none;cursor:pointer;font-weight:bold;">Adicionar</button>
+            </div>
+
+            <strong>Idiomas</strong><div id="list-l" style="max-height:200px;overflow:auto;margin:8px 0;padding:8px;background:#0002;border-radius:8px;"></div>
+            <div style="display:flex;gap:8px;margin:8px 0;">
+                <select id="select-l" style="flex:1;padding:8px;border-radius:8px;background:#273340;color:#fff;border:none;"><option value="">Selecione um Idioma...</option></select>
+                <button id="btn-add-l" style="padding:8px 16px;border-radius:8px;background:#1d9bf0;color:#fff;border:none;cursor:pointer;font-weight:bold;">Adicionar</button>
+            </div>
+
+            <div id="xcb-blocked-count" style="margin:8px 0;font-size:13px;color:#d9d9d9;">Filtrados nesta sessão: 0</div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:6px 0;"><input type="checkbox" id="xcb-highlight-region-only"> Destacar contas mostrando apenas região (amarelo)</label>
+            <div id="xcb-analytics" style="margin:10px 0;font-size:13px;color:#aab8c2;">Carregando estatísticas...</div>
+            <button id="xcb-following-scan" style="width:100%;padding:10px;background:#273340;border:none;border-radius:8px;color:#fff;margin-top:8px;cursor:pointer;">Analisar Seguindo (detalhar países)</button>
             <div id="xcb-following-status" style="margin:6px 0;font-size:12px;color:#aab8c2;"></div>
             <div id="xcb-following-report" style="max-height:180px;overflow:auto;padding:8px;background:#0002;border-radius:8px;font-size:12px;color:#e7e9ea;"></div>
-            <button id="export-db" style="width:100%;padding:10px;background:#273340;border:none;border-radius:8px;color:#fff;margin-top:12px;cursor:pointer;">Export DB (JSON)</button>
-            <button id="close" style="width:100%;padding:10px;background:#1d9bf0;border:none;border-radius:8px;color:#fff;margin-top:12px;cursor:pointer;">Close</button>
+            <button id="export-db" style="width:100%;padding:10px;background:#273340;border:none;border-radius:8px;color:#fff;margin-top:12px;cursor:pointer;">Exportar DB (JSON)</button>
+            <button id="close" style="width:100%;padding:10px;background:#1d9bf0;border:none;border-radius:8px;color:#fff;margin-top:12px;cursor:pointer;">Fechar</button>
         </div>`;
 		document.body.appendChild(modal);
 
@@ -1151,8 +1024,32 @@
 		modal.querySelector("div").appendChild(statusLine);
 
 		updateFilteredDisplay();
-
 		const setStatus = (msg) => { statusLine.textContent = msg || ""; };
+
+        // Populate Dropdowns
+        const selC = document.getElementById("select-c");
+        Object.entries(COUNTRY_MAP).sort((a,b) => a[0].localeCompare(b[0])).forEach(([name, code]) => {
+            const opt = document.createElement("option");
+            opt.value = code;
+            opt.textContent = `${name} (${code})`;
+            selC.appendChild(opt);
+        });
+
+        const selR = document.getElementById("select-r");
+        REGION_DEFS.sort((a,b) => a.name.localeCompare(b.name)).forEach(def => {
+            const opt = document.createElement("option");
+            opt.value = def.name;
+            opt.textContent = def.name;
+            selR.appendChild(opt);
+        });
+
+        const selL = document.getElementById("select-l");
+        Object.keys(LANG_SCRIPTS).sort().forEach(code => {
+            const opt = document.createElement("option");
+            opt.value = code;
+            opt.textContent = LANG_NAMES[code] || code;
+            selL.appendChild(opt);
+        });
 
 		modal.querySelectorAll('input[name="xcb-mode"]').forEach((input) => {
 			input.checked = input.value === (config.filterMode === "highlight" ? "highlight" : "block");
@@ -1160,7 +1057,7 @@
 				if (!input.checked) return;
 				config.filterMode = input.value === "highlight" ? "highlight" : "block";
 				save();
-				setStatus(config.filterMode === "highlight" ? "Highlighting filtered posts with flags" : "Blocking filtered posts");
+				setStatus(config.filterMode === "highlight" ? "Destacando posts filtrados com bandeiras" : "Bloqueando posts filtrados");
 				document.querySelectorAll('article[data-testid="tweet"]').forEach((t) => clearFilterMark(t));
 				safeScan();
 				updateFilteredDisplay();
@@ -1173,7 +1070,7 @@
 			regionOnlyToggle.addEventListener("change", () => {
 				config.highlightRegionDisplayOnly = regionOnlyToggle.checked;
 				save();
-				setStatus(config.highlightRegionDisplayOnly ? "Highlighting region-only accounts in yellow" : "Region-only highlighting disabled");
+				setStatus(config.highlightRegionDisplayOnly ? "Destacando contas de apenas região em amarelo" : "Destaque de região desativado");
 				if (!config.highlightRegionDisplayOnly) {
 					document.querySelectorAll('article[data-testid="tweet"]').forEach((t) => { if (t.dataset.xcbMode === "region-only") clearFilterMark(t); });
 				}
@@ -1187,7 +1084,7 @@
 			followScanBtn.onclick = () => {
 				if (followScanBtn.disabled) return;
 				followScanBtn.disabled = true;
-				followStatus.textContent = "Starting following analysis…";
+				followStatus.textContent = "Iniciando análise de seguindo...";
 				analyzeFollowing((msg) => { followStatus.textContent = msg; }).finally(() => { followScanBtn.disabled = false; });
 			};
 		}
@@ -1197,7 +1094,6 @@
 			countryList.innerHTML = "";
 			Array.from(config.blockedCountries).sort().forEach((c) => {
 				const row = document.createElement("div");
-				row.id = `xcb-c-${c}`;
 				row.style.display = "flex";
 				row.style.justifyContent = "space-between";
 				row.style.padding = "4px 0";
@@ -1207,7 +1103,7 @@
 					save();
 					refreshList();
 					scanAndHide();
-					setStatus(`Removed country ${c}`);
+					setStatus(`País removido: ${c}`);
 				});
 				countryList.appendChild(row);
 			});
@@ -1216,7 +1112,6 @@
 			regionList.innerHTML = "";
 			Array.from(config.blockedRegions).sort().forEach((r) => {
 				const row = document.createElement("div");
-				row.id = `xcb-r-${r}`;
 				row.style.display = "flex";
 				row.style.justifyContent = "space-between";
 				row.style.padding = "4px 0";
@@ -1226,7 +1121,7 @@
 					save();
 					refreshList();
 					scanAndHide();
-					setStatus(`Removed region ${r}`);
+					setStatus(`Região removida: ${r}`);
 				});
 				regionList.appendChild(row);
 			});
@@ -1235,17 +1130,16 @@
 			langList.innerHTML = "";
 			Array.from(config.blockedLangs).sort().forEach((l) => {
 				const row = document.createElement("div");
-				row.id = `xcb-l-${l}`;
 				row.style.display = "flex";
 				row.style.justifyContent = "space-between";
 				row.style.padding = "4px 0";
-				row.innerHTML = `<span>${l} <span class="xcb-count" style="color:#aab8c2;">(S:${blockStats.lang[l] || 0} | T:${config.filterTotals?.lang?.[l] || 0})</span></span><span style="cursor:pointer;color:#f00;">×</span>`;
+				row.innerHTML = `<span>${LANG_NAMES[l] || l} <span class="xcb-count" style="color:#aab8c2;">(S:${blockStats.lang[l] || 0} | T:${config.filterTotals?.lang?.[l] || 0})</span></span><span style="cursor:pointer;color:#f00;">×</span>`;
 				row.lastChild.addEventListener("click", () => {
 					config.blockedLangs.delete(l);
 					save();
 					refreshList();
 					scanAndHide();
-					setStatus(`Removed language ${l}`);
+					setStatus(`Idioma removido: ${l}`);
 				});
 				langList.appendChild(row);
 			});
@@ -1254,7 +1148,7 @@
 			if (analyticsDiv) {
 				const topCountries = Object.entries(config.analytics?.seenCountry || {}).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([code, count]) => `${countryCodeToFlag(code) || ""} ${code} (${count})`).join(", ");
 				const topRegions = Object.entries(config.analytics?.seenRegion || {}).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, count]) => `${name} (${count})`).join(", ");
-				analyticsDiv.innerHTML = `<div style="margin-top:6px;">Seen (total): ${config.analytics?.seenTotal || 0}</div><div style="margin-top:4px;">Top countries: ${topCountries || "—"}</div><div style="margin-top:4px;">Top regions: ${topRegions || "—"}</div>`;
+				analyticsDiv.innerHTML = `<div style="margin-top:6px;">Vistos (total): ${config.analytics?.seenTotal || 0}</div><div style="margin-top:4px;">Principais países: ${topCountries || "—"}</div><div style="margin-top:4px;">Principais regiões: ${topRegions || "—"}</div>`;
 			}
 		};
 
@@ -1266,10 +1160,29 @@
 		modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
 		document.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") { e.preventDefault(); openModal(); } if (e.key === "Escape") closeModal(); });
 		document.getElementById("close").onclick = () => closeModal();
-		document.getElementById("export-db").onclick = () => { setStatus("DB exported to console"); console.log("XCB DB", exportDB()); };
-		document.getElementById("add-c").onkeydown = (e) => { if (e.key === "Enter") { const v = e.target.value.trim(); const code = resolveCountryCode(v); if (!code) { setStatus(`Could not resolve "${v}". Try a 2-letter code or country name.`); return; } config.blockedCountries.add(code); save(); refreshList(); scanAndHide(); setStatus(`Added country ${code}`); e.target.value = ""; } };
-		document.getElementById("add-l").onkeydown = (e) => { if (e.key === "Enter") { const v = e.target.value.trim().toLowerCase(); if (v) { config.blockedLangs.add(v); save(); refreshList(); scanAndHide(); setStatus(`Added language ${v}`); e.target.value = ""; } } };
-		document.getElementById("add-r").onkeydown = (e) => { if (e.key === "Enter") { const v = e.target.value.trim(); const resolved = resolveRegionName(v); if (!resolved) { setStatus(`Unknown region "${v}". Try a listed region name.`); return; } config.blockedRegions.add(resolved); save(); refreshList(); scanAndHide(); setStatus(`Added region ${resolved}`); e.target.value = ""; } };
+		document.getElementById("export-db").onclick = () => { setStatus("DB exportado para o console"); console.log("XCB DB", exportDB()); };
+        
+        // Add Button Logic
+		document.getElementById("btn-add-c").onclick = () => {
+            const code = document.getElementById("select-c").value;
+            if(!code) return;
+            config.blockedCountries.add(code);
+            save(); refreshList(); scanAndHide(); setStatus(`País adicionado: ${code}`);
+        };
+
+        document.getElementById("btn-add-r").onclick = () => {
+            const val = document.getElementById("select-r").value;
+            if(!val) return;
+            config.blockedRegions.add(val);
+            save(); refreshList(); scanAndHide(); setStatus(`Região adicionada: ${val}`);
+        };
+
+        document.getElementById("btn-add-l").onclick = () => {
+            const val = document.getElementById("select-l").value;
+            if(!val) return;
+            config.blockedLangs.add(val);
+            save(); refreshList(); scanAndHide(); setStatus(`Idioma adicionado: ${val}`);
+        };
 	}
 
 	function start() {
@@ -1286,7 +1199,6 @@
 		try { scanAndHide(); scanChatFlags(); } catch (e) { console.error("scan error", e); }
 	}
 
-    // Corrected placement of flagPalette (inside the closure)
 	function flagPalette(code) {
 		const c = (code || "").toUpperCase();
 		const table = {
@@ -1298,5 +1210,5 @@
 
 	Promise.all([loadKnownFromDB(), loadTotalsFromDB()]).finally(() => start());
 
-	console.log("X Country Blocker v5.2 (Universal) ready");
+	console.log("X Country Blocker v5.3 (PT-BR) pronto");
 })();
