@@ -46,9 +46,10 @@ Highlighted posts are obvious (if not blocked):
 - Extension entrypoint: `extension/content.js`, manifest at `extension/manifest.json`.
 - CI: pushes to `main`/`master` build artifacts (userscript, zipped extension, changelog) as workflow artifacts. Tagging `v*` publishes a GitHub Release with those files attached and the changelog as the release body.
 
-  ======================================================
 
-  ## CleanX
+## ======================================================
+
+## CleanX - PT-BR
 
 Script de usuário pessoal (e extensão do Chrome) para X/Twitter que filtra publicações por país, região ou idioma, com destaque opcional.
 
