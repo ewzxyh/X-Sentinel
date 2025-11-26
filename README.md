@@ -1,6 +1,4 @@
-Crie um tweet que vai ter muito engajamento com base em tweet de brasileiros da bolha dev, e com base no meu script/extensão de navegador para o X/Twitter. Obs: inclua tambem uma piada tipo bloqueie "indianos, paquistaneses e ((((eles))))"
- 
-## X-Sentinel - PT-BR
+ ## X-Sentinel - PT-BR
 
 Userscript e extensão para X/Twitter que filtra publicações por país, região ou idioma, oferecendo opções de destaque visual.
 ### Recursos
