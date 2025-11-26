@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "CleanX",
-  "description": "Filter X/Twitter posts by country, region, or language with optional highlighting.",
-  "version": "1.0.0",
+  "name": "X-Sentinel",
+  "description": "Filtre publicações do X/Twitter por país, região ou idioma com destaque opcional.",
+  "version": "7.0",
   "permissions": ["storage"],
   "content_scripts": [
     {
