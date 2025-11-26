@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         CleanX - Bloqueador de País/Região/Idioma (PT-BR)
+// @name         X-Sentinel - Adiciona bandeiras de países aos perfis/mensagens e permite filtrar o feed bloqueando conteúdos por país, região e idioma no X/Twitter (pt-br).
 // @namespace    http://tampermonkey.net/
-// @version      6.1
-// @description  Bloqueie ou mostre país, região e idioma. Interface Swiss Design em Português.
-// @author       A Pleasant Experience & Gemini
+// @version      7.0
+// @description  Adiciona bandeiras de países aos perfis/mensagens e permite filtrar o feed bloqueando conteúdos por país, região e idioma no X/Twitter (pt-br).
+// @author       Ewzxyh
 // @match        https://x.com/*
 // @match        https://twitter.com/*
 // @grant        GM_xmlhttpRequest
@@ -15,7 +15,8 @@
 
 	if (!/^https?:\/\/(x|twitter)\.com\//.test(window.location.href)) return;
 
-	const STORAGE_KEY = "xCountryBlocker";
+	const STORAGE_KEY = "xSentinelData";
+	const KNOWN_USERS_KEY = "xSentinelKnownUsers";
 	const defaultTotals = () => ({
 		overall: 0,
 		country: {},
@@ -51,11 +52,16 @@
 	let nextFetchAllowed = 0;
 	let scanDebounceTimer = null;
 	let isScanning = false;
-	const FETCH_GAP_MS = 5000;
-	const RATE_LIMIT_BACKOFF_MS = 2 * 60 * 1000;
-	const UNKNOWN_RETRY_MS = 10 * 60 * 1000;
-	const PREFETCH_BATCH = 5;
-	const PREFETCH_INTERVAL_MS = 5000;
+	let apiRequestCount = 0;
+	let lastApiReset = nowTs();
+
+	// Configurações otimizadas para evitar rate limit
+	const FETCH_GAP_MS = 8000; // 8 segundos entre requisições
+	const RATE_LIMIT_BACKOFF_MS = 5 * 60 * 1000; // 5 minutos de espera após rate limit
+	const UNKNOWN_RETRY_MS = 30 * 60 * 1000; // 30 minutos antes de tentar novamente usuário desconhecido
+	const PREFETCH_BATCH = 2; // Apenas 2 requisições por ciclo
+	const PREFETCH_INTERVAL_MS = 10000; // 10 segundos entre ciclos
+	const MAX_REQUESTS_PER_15MIN = 15; // Limite conservador de requisições
 	const blockStats = { country: {}, lang: {}, region: {} };
 	let dbPromise = null;
 	const FIELD_TOGGLES = { withAuxiliaryUserLabels: false };
@@ -168,17 +174,44 @@
 			config.countryFilterEnabled = parsed.countryFilterEnabled !== false;
 			config.regionFilterEnabled = parsed.regionFilterEnabled !== false;
 			config.langFilterEnabled = parsed.langFilterEnabled !== false;
-			if (parsed.knownUsers) {
-				config.knownUsers = {};
-				for (const [k, v] of Object.entries(parsed.knownUsers)) {
-					config.knownUsers[k] = {
-						accountCountry: v.accountCountry || null,
-						accountRegion: v.accountRegion || null,
-						usernameChanges: typeof v.usernameChanges === "number" ? v.usernameChanges : null,
-						ts: v.ts || 0,
-					};
+		}
+		// Carrega usuários conhecidos do localStorage (backup do IndexedDB)
+		loadKnownUsersFromLocalStorage();
+	}
+
+	function loadKnownUsersFromLocalStorage() {
+		try {
+			const savedUsers = localStorage.getItem(KNOWN_USERS_KEY);
+			if (savedUsers) {
+				const parsed = JSON.parse(savedUsers);
+				for (const [k, v] of Object.entries(parsed)) {
+					if (!config.knownUsers[k]) {
+						config.knownUsers[k] = {
+							accountCountry: v.accountCountry || null,
+							accountRegion: v.accountRegion || null,
+							usernameChanges: typeof v.usernameChanges === "number" ? v.usernameChanges : null,
+							ts: v.ts || 0,
+						};
+					}
 				}
 			}
+		} catch (e) {
+			console.warn("[X-Sentinel] loadKnownUsersFromLocalStorage failed", e);
+		}
+	}
+
+	function saveKnownUsersToLocalStorage() {
+		try {
+			// Salva apenas os usuários com país conhecido para economizar espaço
+			const usersWithCountry = {};
+			for (const [k, v] of Object.entries(config.knownUsers)) {
+				if (v.accountCountry) {
+					usersWithCountry[k] = v;
+				}
+			}
+			localStorage.setItem(KNOWN_USERS_KEY, JSON.stringify(usersWithCountry));
+		} catch (e) {
+			console.warn("[X-Sentinel] saveKnownUsersToLocalStorage failed", e);
 		}
 	}
 
@@ -198,6 +231,22 @@
 				langFilterEnabled: config.langFilterEnabled,
 			}),
 		);
+	}
+
+	// Verifica se ainda tem cota de requisições
+	function canMakeApiRequest() {
+		const now = nowTs();
+		// Reseta contador a cada 15 minutos
+		if (now - lastApiReset > 15 * 60 * 1000) {
+			apiRequestCount = 0;
+			lastApiReset = now;
+		}
+		return apiRequestCount < MAX_REQUESTS_PER_15MIN && now >= nextFetchAllowed;
+	}
+
+	function incrementApiCounter() {
+		apiRequestCount++;
+		console.log(`[X-Sentinel] API requests: ${apiRequestCount}/${MAX_REQUESTS_PER_15MIN}`);
 	}
 
 	function openDB() {
@@ -229,7 +278,7 @@
 				req.onsuccess = () => resolve(req.result || []);
 				req.onerror = () => reject(req.error);
 			});
-			config.knownUsers = {};
+			// Mantém dados existentes do localStorage
 			for (const row of rows) {
 				if (!row?.user) continue;
 				config.knownUsers[row.user] = {
@@ -239,8 +288,12 @@
 					ts: row.ts || 0,
 				};
 			}
+			// Sincroniza com localStorage
+			saveKnownUsersToLocalStorage();
+			const userCount = Object.keys(config.knownUsers).filter(k => config.knownUsers[k]?.accountCountry).length;
+			console.log(`[X-Sentinel] ${userCount} usuários em cache (economia de requisições)`);
 		} catch (e) {
-			console.warn("[XCB] loadKnownFromDB failed", e);
+			console.warn("[X-Sentinel] loadKnownFromDB failed", e);
 		}
 	}
 
@@ -256,7 +309,7 @@
 				ts: data.ts || nowTs(),
 			});
 		} catch (e) {
-			console.warn("[XCB] saveKnownToDB failed", e);
+			console.warn("[X-Sentinel] saveKnownToDB failed", e);
 		}
 	}
 
@@ -282,7 +335,7 @@
 				config.analytics = { ...defaultAnalytics(), ...(totals.analytics || {}) };
 			}
 		} catch (e) {
-			console.warn("[XCB] loadTotalsFromDB failed", e);
+			console.warn("[X-Sentinel] loadTotalsFromDB failed", e);
 		} finally {
 			if (!config.filterTotals) config.filterTotals = defaultTotals();
 		}
@@ -303,7 +356,7 @@
 				updated: nowTs(),
 			});
 		} catch (e) {
-			console.warn("[XCB] saveTotalsToDB failed", e);
+			console.warn("[X-Sentinel] saveTotalsToDB failed", e);
 		}
 	}
 
@@ -490,6 +543,17 @@
 		const counterEl = document.getElementById("xcb-blocked-count");
 		if (counterEl)
 			counterEl.textContent = `Detectados nesta sessão: ${filteredCount} | Total Ocultos: ${config.filterTotals?.overall || 0}`;
+
+		// Atualiza contador de requisições da API
+		const reqCountEl = document.getElementById("xcb-req-count");
+		const reqLimitEl = document.getElementById("xcb-req-limit");
+		const cacheCountEl = document.getElementById("xcb-cache-count");
+		if (reqCountEl) reqCountEl.textContent = String(apiRequestCount);
+		if (reqLimitEl) reqLimitEl.textContent = String(MAX_REQUESTS_PER_15MIN);
+		if (cacheCountEl) {
+			const cachedUsers = Object.keys(config.knownUsers).filter(k => config.knownUsers[k]?.accountCountry).length;
+			cacheCountEl.textContent = String(cachedUsers);
+		}
 	}
 
 	function clearFilterMark(tweet) {
@@ -516,7 +580,7 @@
 		tweet.dataset.xcbReason = reason;
 		tweet.dataset.xcbPrevDisplay = tweet.style.display || "";
 		tweet.style.setProperty("display", "none", "important");
-		console.log("[CleanX] Bloqueado:", reason);
+		console.log("[X-Sentinel] Bloqueado:", reason);
 	}
 
 	function bumpCounts({ countryCode, lang, region }) {
@@ -637,14 +701,15 @@
 		const wantsToShow = config.displayMode === "show" || config.displayMode === "both";
 		if (!hasFilters && !wantsToShow) return false;
 
-		const now = nowTs();
-		if (now < nextFetchAllowed) {
-			config.knownUsers[user] = { accountCountry: null, ts: now };
+		// Verifica se pode fazer requisição (rate limit interno)
+		if (!canMakeApiRequest()) {
+			config.knownUsers[user] = { accountCountry: null, ts: nowTs() };
 			return false;
 		}
 
 		config.pending.add(user);
-		console.log("[XCB] fetching about page for", user);
+		incrementApiCounter();
+		console.log("[X-Sentinel] fetching about page for", user);
 		const host = window.location.host || "x.com";
 		const url = `https://${host}/i/api/graphql/${ABOUT_QUERY_ID}/AboutAccountQuery?variables=${encodeURIComponent(JSON.stringify({ screenName: user }))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}&fieldToggles=${encodeURIComponent(JSON.stringify(FIELD_TOGGLES))}`;
 
@@ -671,12 +736,12 @@
 					return;
 				}
 				if (status >= 400) {
-					console.warn("[XCB] about query failed", status, body?.errors);
+					console.warn("[X-Sentinel] about query failed", status, body?.errors);
 					config.pending.delete(user);
 					return;
 				}
 				const info = parseProfileFromJson(body);
-				console.log("[XCB] about json", user, info);
+				console.log("[X-Sentinel] about json", user, info);
 				if (!info.accountCountry && !info.accountRegion) {
 					config.knownUsers[user] = {
 						accountCountry: null,
@@ -694,6 +759,7 @@
 					ts: nowTs(),
 				};
 				saveKnownToDB(user, config.knownUsers[user]);
+				saveKnownUsersToLocalStorage(); // Backup no localStorage
 				if (info.accountCountry) {
 					const code = info.accountCountry;
 					if (!config.countryDB[code]) config.countryDB[code] = [];
@@ -703,7 +769,7 @@
 				save();
 			})
 			.catch((err) => {
-				console.error("[XCB] fetch about failed", user, err);
+				console.error("[X-Sentinel] fetch about failed", user, err);
 			})
 			.finally(() => {
 				config.pending.delete(user);
@@ -825,7 +891,7 @@
 		btn.id = "xcb-button";
 		btn.setAttribute("role", "button");
 		btn.href = "javascript:void(0)";
-		btn.innerHTML = '<span class="xcb-icon" style="font-size:22px;line-height:22px;">🚫</span><span class="xcb-label" style="font-size:18px;font-weight:700;">CleanX</span>';
+		btn.innerHTML = '<span class="xcb-icon" style="font-size:22px;line-height:22px;">🛡️</span><span class="xcb-label" style="font-size:18px;font-weight:700;">X-Sentinel</span>';
 		btn.style = "display:flex;align-items:center;gap:14px;padding:12px;border-radius:9999px;color:#e7e9ea;text-decoration:none;font-size:17px;font-weight:700;cursor:pointer;max-width:260px;min-width:52px;box-sizing:border-box;font-family:system-ui,-apple-system,sans-serif;";
 		btn.onmouseenter = () => { btn.style.backgroundColor = "rgba(255,255,255,0.08)"; };
 		btn.onmouseleave = () => { btn.style.backgroundColor = "transparent"; };
@@ -876,123 +942,151 @@
 
 		modal.innerHTML = `
 		<div id="xcb-modal-content" style="
-			background: #1a1a2e;
-			color: #e0e0e0;
+			background: #15202b;
+			color: #e7e9ea;
 			padding: 28px 32px;
 			border-radius: 16px;
 			max-width: 600px;
 			width: 94%;
 			max-height: 88vh;
 			overflow-y: auto;
-			box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-			border: 1px solid rgba(255, 255, 255, 0.1);
+			box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+			border: 1px solid #38444d;
 		">
-			<h2 style="margin: 0 0 8px; text-align: center; font-size: 24px; font-weight: 600; letter-spacing: -0.5px; color: #fff;">
-				🚫 CleanX
+			<h2 style="margin: 0 0 8px; text-align: center; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; color: #e7e9ea;">
+				🛡️ X-Sentinel
 			</h2>
-			<p style="text-align: center; font-size: 13px; color: #888; margin: 0 0 20px;">
+			<p style="text-align: center; font-size: 13px; color: #71767b; margin: 0 0 12px;">
 				Bloqueador de País, Região e Idioma para X/Twitter
 			</p>
-			
+
+			<!-- AVISO DE LIMITE DA API -->
+			<div style="margin-bottom: 16px; padding: 12px 14px; background: #1c2732; border-radius: 12px; border: 1px solid #38444d;">
+				<div style="display: flex; align-items: flex-start; gap: 10px;">
+					<span style="font-size: 18px;">⚠️</span>
+					<div>
+						<div style="font-size: 13px; font-weight: 600; color: #f7b928; margin-bottom: 4px;">Aviso: Limite da API do X/Twitter</div>
+						<div style="font-size: 12px; color: #8b98a5; line-height: 1.5;">
+							Esta funcionalidade utiliza a API do X/Twitter que possui <strong style="color:#e7e9ea;">limite baixo de requisições</strong>.
+							A detecção de países funciona melhor em <strong style="color:#e7e9ea;">breves períodos de uso</strong>.
+							Usuários já identificados ficam salvos no cache para reduzir requisições.
+						</div>
+					</div>
+				</div>
+			</div>
+
 			<!-- MODO DE EXIBIÇÃO -->
-			<div style="margin-bottom: 20px; padding: 16px; background: rgba(29, 155, 240, 0.1); border-radius: 12px; border: 1px solid rgba(29, 155, 240, 0.2);">
-				<div style="font-weight: 600; font-size: 15px; margin-bottom: 12px; color: #1d9bf0;">Modo de Operação</div>
+			<div style="margin-bottom: 20px; padding: 16px; background: #1c2732; border-radius: 12px; border: 1px solid #38444d;">
+				<div style="font-weight: 700; font-size: 15px; margin-bottom: 12px; color: #1d9bf0;">Modo de Operação</div>
 				<div style="display: flex; flex-direction: column; gap: 8px;">
-					<label style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+					<label style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 8px 12px; background: #192734; border-radius: 8px; border: 1px solid #38444d;">
 						<input type="radio" name="xcb-display-mode" value="show" style="width: 16px; height: 16px; accent-color: #1d9bf0;">
-						<span><strong>Apenas mostrar país</strong> — Exibe a bandeira ao lado do nome, sem bloquear</span>
+						<span style="color: #e7e9ea;"><strong>Apenas mostrar país</strong> — Exibe bandeira de TODOS os usuários identificados</span>
 					</label>
-					<label style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+					<label style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 8px 12px; background: #192734; border-radius: 8px; border: 1px solid #38444d;">
 						<input type="radio" name="xcb-display-mode" value="block" style="width: 16px; height: 16px; accent-color: #1d9bf0;">
-						<span><strong>Apenas bloquear</strong> — Oculta posts dos países/regiões/idiomas selecionados</span>
+						<span style="color: #e7e9ea;"><strong>Apenas bloquear</strong> — Oculta posts dos selecionados abaixo (sem bandeiras)</span>
 					</label>
-					<label style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+					<label style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 8px 12px; background: #192734; border-radius: 8px; border: 1px solid #38444d;">
 						<input type="radio" name="xcb-display-mode" value="both" style="width: 16px; height: 16px; accent-color: #1d9bf0;">
-						<span><strong>Mostrar e bloquear</strong> — Exibe bandeiras E bloqueia os selecionados</span>
+						<span style="color: #e7e9ea;"><strong>Mostrar e bloquear</strong> — Bandeira em TODOS + bloqueia os selecionados</span>
 					</label>
 				</div>
 			</div>
-			
-			<!-- PAÍSES -->
-			<div style="margin-bottom: 20px; padding: 16px; background: rgba(255,255,255,0.03); border-radius: 12px; border: 1px solid rgba(255,255,255,0.06);">
-				<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-					<label style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; cursor: pointer;">
-						<input type="checkbox" id="xcb-toggle-country" style="width: 18px; height: 18px; accent-color: #1d9bf0;">
-						Países
-					</label>
-					<div style="display: flex; gap: 6px;">
-						<button id="btn-add-all-c" style="padding: 6px 10px; font-size: 11px; background: #2a3a4a; border: none; border-radius: 6px; color: #aaa; cursor: pointer;">Adicionar Todos</button>
-						<button id="btn-clear-c" style="padding: 6px 10px; font-size: 11px; background: #3a2a2a; border: none; border-radius: 6px; color: #f88; cursor: pointer;">Limpar</button>
+
+			<!-- SEÇÃO DE BLOQUEIO -->
+			<div id="xcb-block-section">
+				<div style="margin-bottom: 12px; padding: 10px 14px; background: #1c2732; border-radius: 8px; border: 1px solid #38444d;">
+					<div style="font-size: 13px; color: #71767b;">📋 <strong style="color:#e7e9ea;">Lista de Filtros:</strong> Posts de usuários dos países/regiões/idiomas abaixo serão ocultados.</div>
+				</div>
+
+				<!-- PAÍSES -->
+				<div style="margin-bottom: 20px; padding: 16px; background: #1c2732; border-radius: 12px; border: 1px solid #38444d;">
+					<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+						<label style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; cursor: pointer; color: #e7e9ea;">
+							<input type="checkbox" id="xcb-toggle-country" style="width: 18px; height: 18px; accent-color: #1d9bf0;">
+							🌍 Filtrar Países
+						</label>
+						<div style="display: flex; gap: 6px;">
+							<button id="btn-add-all-c" style="padding: 6px 10px; font-size: 11px; background: #273340; border: 1px solid #38444d; border-radius: 8px; color: #8b98a5; cursor: pointer;">Adicionar Todos</button>
+							<button id="btn-clear-c" style="padding: 6px 10px; font-size: 11px; background: #273340; border: 1px solid #38444d; border-radius: 8px; color: #f4212e; cursor: pointer;">Limpar</button>
+						</div>
+					</div>
+					<div id="list-c" style="max-height: 140px; overflow-y: auto; margin-bottom: 10px; padding: 8px; background: #192734; border-radius: 8px; font-size: 13px; border: 1px solid #38444d;"></div>
+					<div style="display: flex; gap: 8px;">
+						<div style="flex: 1; position: relative;">
+							<input type="text" id="search-c" placeholder="🔍 Pesquisar país..." style="width: 100%; padding: 10px 12px; border-radius: 8px; background: #273340; color: #e7e9ea; border: 1px solid #38444d; font-size: 14px; box-sizing: border-box;">
+							<select id="select-c" size="6" style="width: 100%; padding: 0; border-radius: 0 0 12px 12px; background: #273340; color: #e7e9ea; border: 1px solid #38444d; border-top: none; font-size: 14px; display: none; position: absolute; z-index: 100; max-height: 200px;">
+							</select>
+						</div>
+						<button id="btn-add-c" style="padding: 10px 20px; border-radius: 8px; background: #1d9bf0; color: #fff; border: none; cursor: pointer; font-weight: 700; font-size: 14px; align-self: flex-start;">Adicionar</button>
 					</div>
 				</div>
-				<div id="list-c" style="max-height: 140px; overflow-y: auto; margin-bottom: 10px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 8px; font-size: 13px;"></div>
-				<div style="display: flex; gap: 8px;">
-					<select id="select-c" style="flex: 1; padding: 10px 12px; border-radius: 8px; background: #252540; color: #fff; border: 1px solid rgba(255,255,255,0.1); font-size: 14px;">
-						<option value="">Selecione um país...</option>
-					</select>
-					<button id="btn-add-c" style="padding: 10px 20px; border-radius: 8px; background: #1d9bf0; color: #fff; border: none; cursor: pointer; font-weight: 600; font-size: 14px;">Adicionar</button>
-				</div>
-			</div>
-			
-			<!-- REGIÕES -->
-			<div style="margin-bottom: 20px; padding: 16px; background: rgba(255,255,255,0.03); border-radius: 12px; border: 1px solid rgba(255,255,255,0.06);">
-				<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-					<label style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; cursor: pointer;">
-						<input type="checkbox" id="xcb-toggle-region" style="width: 18px; height: 18px; accent-color: #1d9bf0;">
-						Regiões
-					</label>
-					<div style="display: flex; gap: 6px;">
-						<button id="btn-add-all-r" style="padding: 6px 10px; font-size: 11px; background: #2a3a4a; border: none; border-radius: 6px; color: #aaa; cursor: pointer;">Adicionar Todas</button>
-						<button id="btn-clear-r" style="padding: 6px 10px; font-size: 11px; background: #3a2a2a; border: none; border-radius: 6px; color: #f88; cursor: pointer;">Limpar</button>
+
+				<!-- REGIÕES -->
+				<div style="margin-bottom: 20px; padding: 16px; background: #1c2732; border-radius: 12px; border: 1px solid #38444d;">
+					<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+						<label style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; cursor: pointer; color: #e7e9ea;">
+							<input type="checkbox" id="xcb-toggle-region" style="width: 18px; height: 18px; accent-color: #1d9bf0;">
+							🗺️ Filtrar Regiões
+						</label>
+						<div style="display: flex; gap: 6px;">
+							<button id="btn-add-all-r" style="padding: 6px 10px; font-size: 11px; background: #273340; border: 1px solid #38444d; border-radius: 8px; color: #8b98a5; cursor: pointer;">Adicionar Todas</button>
+							<button id="btn-clear-r" style="padding: 6px 10px; font-size: 11px; background: #273340; border: 1px solid #38444d; border-radius: 8px; color: #f4212e; cursor: pointer;">Limpar</button>
+						</div>
+					</div>
+					<div id="list-r" style="max-height: 140px; overflow-y: auto; margin-bottom: 10px; padding: 8px; background: #192734; border-radius: 8px; font-size: 13px; border: 1px solid #38444d;"></div>
+					<div style="display: flex; gap: 8px;">
+						<div style="flex: 1; position: relative;">
+							<input type="text" id="search-r" placeholder="🔍 Pesquisar região..." style="width: 100%; padding: 10px 12px; border-radius: 8px; background: #273340; color: #e7e9ea; border: 1px solid #38444d; font-size: 14px; box-sizing: border-box;">
+							<select id="select-r" size="6" style="width: 100%; padding: 0; border-radius: 0 0 12px 12px; background: #273340; color: #e7e9ea; border: 1px solid #38444d; border-top: none; font-size: 14px; display: none; position: absolute; z-index: 100; max-height: 200px;">
+							</select>
+						</div>
+						<button id="btn-add-r" style="padding: 10px 20px; border-radius: 8px; background: #1d9bf0; color: #fff; border: none; cursor: pointer; font-weight: 700; font-size: 14px; align-self: flex-start;">Adicionar</button>
 					</div>
 				</div>
-				<div id="list-r" style="max-height: 140px; overflow-y: auto; margin-bottom: 10px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 8px; font-size: 13px;"></div>
-				<div style="display: flex; gap: 8px;">
-					<select id="select-r" style="flex: 1; padding: 10px 12px; border-radius: 8px; background: #252540; color: #fff; border: 1px solid rgba(255,255,255,0.1); font-size: 14px;">
-						<option value="">Selecione uma região...</option>
-					</select>
-					<button id="btn-add-r" style="padding: 10px 20px; border-radius: 8px; background: #1d9bf0; color: #fff; border: none; cursor: pointer; font-weight: 600; font-size: 14px;">Adicionar</button>
-				</div>
-			</div>
-			
-			<!-- IDIOMAS -->
-			<div style="margin-bottom: 20px; padding: 16px; background: rgba(255,255,255,0.03); border-radius: 12px; border: 1px solid rgba(255,255,255,0.06);">
-				<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-					<label style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; cursor: pointer;">
-						<input type="checkbox" id="xcb-toggle-lang" style="width: 18px; height: 18px; accent-color: #1d9bf0;">
-						Idiomas
-					</label>
-					<div style="display: flex; gap: 6px;">
-						<button id="btn-add-all-l" style="padding: 6px 10px; font-size: 11px; background: #2a3a4a; border: none; border-radius: 6px; color: #aaa; cursor: pointer;">Adicionar Todos</button>
-						<button id="btn-clear-l" style="padding: 6px 10px; font-size: 11px; background: #3a2a2a; border: none; border-radius: 6px; color: #f88; cursor: pointer;">Limpar</button>
+
+				<!-- IDIOMAS -->
+				<div style="margin-bottom: 20px; padding: 16px; background: #1c2732; border-radius: 12px; border: 1px solid #38444d;">
+					<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+						<label style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; cursor: pointer; color: #e7e9ea;">
+							<input type="checkbox" id="xcb-toggle-lang" style="width: 18px; height: 18px; accent-color: #1d9bf0;">
+							🗣️ Filtrar Idiomas
+						</label>
+						<div style="display: flex; gap: 6px;">
+							<button id="btn-add-all-l" style="padding: 6px 10px; font-size: 11px; background: #273340; border: 1px solid #38444d; border-radius: 8px; color: #8b98a5; cursor: pointer;">Adicionar Todos</button>
+							<button id="btn-clear-l" style="padding: 6px 10px; font-size: 11px; background: #273340; border: 1px solid #38444d; border-radius: 8px; color: #f4212e; cursor: pointer;">Limpar</button>
+						</div>
+					</div>
+					<div id="list-l" style="max-height: 140px; overflow-y: auto; margin-bottom: 10px; padding: 8px; background: #192734; border-radius: 8px; font-size: 13px; border: 1px solid #38444d;"></div>
+					<div style="display: flex; gap: 8px;">
+						<div style="flex: 1; position: relative;">
+							<input type="text" id="search-l" placeholder="🔍 Pesquisar idioma..." style="width: 100%; padding: 10px 12px; border-radius: 8px; background: #273340; color: #e7e9ea; border: 1px solid #38444d; font-size: 14px; box-sizing: border-box;">
+							<select id="select-l" size="6" style="width: 100%; padding: 0; border-radius: 0 0 12px 12px; background: #273340; color: #e7e9ea; border: 1px solid #38444d; border-top: none; font-size: 14px; display: none; position: absolute; z-index: 100; max-height: 200px;">
+							</select>
+						</div>
+						<button id="btn-add-l" style="padding: 10px 20px; border-radius: 8px; background: #1d9bf0; color: #fff; border: none; cursor: pointer; font-weight: 700; font-size: 14px; align-self: flex-start;">Adicionar</button>
 					</div>
 				</div>
-				<div id="list-l" style="max-height: 140px; overflow-y: auto; margin-bottom: 10px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 8px; font-size: 13px;"></div>
-				<div style="display: flex; gap: 8px;">
-					<select id="select-l" style="flex: 1; padding: 10px 12px; border-radius: 8px; background: #252540; color: #fff; border: 1px solid rgba(255,255,255,0.1); font-size: 14px;">
-						<option value="">Selecione um idioma...</option>
-					</select>
-					<button id="btn-add-l" style="padding: 10px 20px; border-radius: 8px; background: #1d9bf0; color: #fff; border: none; cursor: pointer; font-weight: 600; font-size: 14px;">Adicionar</button>
-				</div>
 			</div>
-			
+
 			<!-- ESTATÍSTICAS -->
-			<div style="margin-bottom: 16px; padding: 14px; background: rgba(29, 155, 240, 0.08); border-radius: 10px; border: 1px solid rgba(29, 155, 240, 0.2);">
+			<div style="margin-bottom: 16px; padding: 14px; background: #1c2732; border-radius: 12px; border: 1px solid #38444d;">
 				<div id="xcb-blocked-count" style="font-size: 14px; font-weight: 500; color: #1d9bf0; margin-bottom: 8px;">
 					Detectados nesta sessão: 0 | Total Ocultos: 0
 				</div>
-				<div id="xcb-analytics" style="font-size: 12px; color: #888; line-height: 1.6;">Carregando estatísticas...</div>
+				<div id="xcb-analytics" style="font-size: 12px; color: #71767b; line-height: 1.6;">Carregando estatísticas...</div>
 			</div>
-			
+
 			<!-- STATUS -->
-			<div id="xcb-status" style="margin-bottom: 16px; font-size: 12px; color: #4ade80; min-height: 18px;"></div>
-			
+			<div id="xcb-status" style="margin-bottom: 16px; font-size: 12px; color: #00ba7c; min-height: 18px;"></div>
+
 			<!-- RODAPÉ COM BOTÕES -->
-			<div style="display: flex; gap: 10px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.08);">
-				<button id="xcb-save" style="flex: 1; padding: 12px; background: #22c55e; border: none; border-radius: 10px; color: #fff; cursor: pointer; font-weight: 600; font-size: 14px;">
+			<div style="display: flex; gap: 10px; padding-top: 16px; border-top: 1px solid #38444d;">
+				<button id="xcb-save" style="flex: 1; padding: 12px; background: #1d9bf0; border: none; border-radius: 8px; color: #fff; cursor: pointer; font-weight: 700; font-size: 14px;">
 					💾 Salvar
 				</button>
-				<button id="xcb-close" style="flex: 1; padding: 12px; background: #525252; border: none; border-radius: 10px; color: #fff; cursor: pointer; font-weight: 600; font-size: 14px;">
+				<button id="xcb-close" style="flex: 1; padding: 12px; background: #273340; border: 1px solid #38444d; border-radius: 8px; color: #e7e9ea; cursor: pointer; font-weight: 700; font-size: 14px;">
 					✕ Fechar
 				</button>
 			</div>
@@ -1031,6 +1125,165 @@
 			selL.appendChild(opt);
 		});
 
+		// Armazena todas as opções para filtrar
+		const allCountryOptions = Array.from(selC.options).map(o => ({ value: o.value, text: o.textContent }));
+		const allRegionOptions = Array.from(selR.options).map(o => ({ value: o.value, text: o.textContent }));
+		const allLangOptions = Array.from(selL.options).map(o => ({ value: o.value, text: o.textContent }));
+
+		// Função genérica para configurar pesquisa com dropdown
+		const setupSearchableDropdown = (searchInput, selectEl, allOptions, onSelect) => {
+			let selectedValue = null;
+
+			const filterOptions = (query) => {
+				const q = query.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+				selectEl.innerHTML = '';
+				const filtered = allOptions.filter(opt =>
+					opt.text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q)
+				);
+				filtered.forEach(opt => {
+					const o = document.createElement('option');
+					o.value = opt.value;
+					o.textContent = opt.text;
+					selectEl.appendChild(o);
+				});
+				return filtered.length > 0;
+			};
+
+			searchInput.addEventListener('focus', () => {
+				filterOptions(searchInput.value);
+				selectEl.style.display = 'block';
+			});
+
+			searchInput.addEventListener('input', () => {
+				filterOptions(searchInput.value);
+				selectEl.style.display = 'block';
+				selectedValue = null;
+			});
+
+			searchInput.addEventListener('blur', (e) => {
+				// Delay para permitir click no select
+				setTimeout(() => {
+					if (!selectEl.contains(document.activeElement)) {
+						selectEl.style.display = 'none';
+					}
+				}, 150);
+			});
+
+			selectEl.addEventListener('change', () => {
+				if (selectEl.value) {
+					selectedValue = selectEl.value;
+					const selectedOption = allOptions.find(o => o.value === selectEl.value);
+					if (selectedOption) {
+						searchInput.value = selectedOption.text;
+					}
+					selectEl.style.display = 'none';
+				}
+			});
+
+			selectEl.addEventListener('dblclick', () => {
+				if (selectEl.value) {
+					onSelect(selectEl.value);
+					searchInput.value = '';
+					selectedValue = null;
+					selectEl.style.display = 'none';
+				}
+			});
+
+			searchInput.addEventListener('keydown', (e) => {
+				if (e.key === 'Enter') {
+					e.preventDefault();
+					if (selectedValue) {
+						onSelect(selectedValue);
+						searchInput.value = '';
+						selectedValue = null;
+						selectEl.style.display = 'none';
+					} else if (selectEl.options.length > 0) {
+						const firstVal = selectEl.options[0].value;
+						onSelect(firstVal);
+						searchInput.value = '';
+						selectEl.style.display = 'none';
+					}
+				} else if (e.key === 'Escape') {
+					selectEl.style.display = 'none';
+					searchInput.blur();
+				} else if (e.key === 'ArrowDown' && selectEl.style.display !== 'none') {
+					e.preventDefault();
+					selectEl.focus();
+					if (selectEl.options.length > 0) {
+						selectEl.selectedIndex = 0;
+					}
+				}
+			});
+
+			selectEl.addEventListener('keydown', (e) => {
+				if (e.key === 'Enter') {
+					e.preventDefault();
+					if (selectEl.value) {
+						onSelect(selectEl.value);
+						searchInput.value = '';
+						selectedValue = null;
+						selectEl.style.display = 'none';
+						searchInput.focus();
+					}
+				} else if (e.key === 'Escape') {
+					selectEl.style.display = 'none';
+					searchInput.focus();
+				}
+			});
+
+			return () => selectedValue;
+		};
+
+		// Configurar pesquisa para países
+		const searchC = document.getElementById('search-c');
+		let getSelectedCountry = setupSearchableDropdown(searchC, selC, allCountryOptions, (val) => {
+			if (val && !config.blockedCountries.has(val)) {
+				config.blockedCountries.add(val);
+				save();
+				refreshList();
+				safeScan();
+				const name = CODE_TO_COUNTRY[val] || val;
+				setStatus(`País bloqueado: ${name}`);
+			}
+		});
+
+		// Configurar pesquisa para regiões
+		const searchR = document.getElementById('search-r');
+		let getSelectedRegion = setupSearchableDropdown(searchR, selR, allRegionOptions, (val) => {
+			if (val && !config.blockedRegions.has(val)) {
+				config.blockedRegions.add(val);
+				save();
+				refreshList();
+				safeScan();
+				setStatus(`Região bloqueada: ${val}`);
+			}
+		});
+
+		// Configurar pesquisa para idiomas
+		const searchL = document.getElementById('search-l');
+		let getSelectedLang = setupSearchableDropdown(searchL, selL, allLangOptions, (val) => {
+			if (val && !config.blockedLangs.has(val)) {
+				config.blockedLangs.add(val);
+				save();
+				refreshList();
+				safeScan();
+				const name = LANG_NAMES[val] || val;
+				setStatus(`Idioma bloqueado: ${name}`);
+			}
+		});
+
+		// Função para mostrar/ocultar seção de bloqueio baseado no modo
+		const updateBlockSectionVisibility = () => {
+			const blockSection = document.getElementById("xcb-block-section");
+			if (blockSection) {
+				if (config.displayMode === "show") {
+					blockSection.style.display = "none";
+				} else {
+					blockSection.style.display = "block";
+				}
+			}
+		};
+
 		// Display mode handlers
 		modal.querySelectorAll('input[name="xcb-display-mode"]').forEach((input) => {
 			input.checked = input.value === config.displayMode;
@@ -1040,6 +1293,8 @@
 				save();
 				const modeNames = { show: "Apenas mostrar país", block: "Apenas bloquear", both: "Mostrar e bloquear" };
 				setStatus(`Modo alterado: ${modeNames[config.displayMode]}`);
+				// Atualiza visibilidade da seção de bloqueio
+				updateBlockSectionVisibility();
 				// Limpa marcações e refaz o scan
 				document.querySelectorAll('article[data-testid="tweet"]').forEach(t => {
 					clearFilterMark(t);
@@ -1052,6 +1307,9 @@
 				updateFilteredDisplay();
 			});
 		});
+
+		// Atualiza visibilidade inicial
+		updateBlockSectionVisibility();
 
 		// Toggle handlers
 		const toggleCountry = document.getElementById("xcb-toggle-country");
@@ -1090,13 +1348,13 @@
 			const countryList = document.getElementById("list-c");
 			countryList.innerHTML = "";
 			if (config.blockedCountries.size === 0) {
-				countryList.innerHTML = '<span style="color:#666;">Nenhum país na lista</span>';
+				countryList.innerHTML = '<span style="color:#71767b;">Nenhum país na lista</span>';
 			} else {
 				Array.from(config.blockedCountries).sort().forEach((c) => {
 					const row = document.createElement("div");
-					row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 8px;margin:2px 0;background:rgba(255,255,255,0.03);border-radius:6px;";
+					row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin:2px 0;background:#273340;border-radius:8px;border:1px solid #38444d;";
 					const countryName = CODE_TO_COUNTRY[c] || c;
-					row.innerHTML = `<span>${countryCodeToFlag(c)} ${countryName} <span style="color:#666;">(S:${blockStats.country[c] || 0} | T:${config.filterTotals?.country?.[c] || 0})</span></span><span style="cursor:pointer;color:#f66;font-size:16px;padding:0 4px;">×</span>`;
+					row.innerHTML = `<span style="color:#e7e9ea;">${countryCodeToFlag(c)} ${countryName} <span style="color:#71767b;">(S:${blockStats.country[c] || 0} | T:${config.filterTotals?.country?.[c] || 0})</span></span><span style="cursor:pointer;color:#f4212e;font-size:16px;padding:0 4px;">×</span>`;
 					row.lastChild.addEventListener("click", () => {
 						config.blockedCountries.delete(c);
 						save();
@@ -1111,12 +1369,12 @@
 			const regionList = document.getElementById("list-r");
 			regionList.innerHTML = "";
 			if (config.blockedRegions.size === 0) {
-				regionList.innerHTML = '<span style="color:#666;">Nenhuma região na lista</span>';
+				regionList.innerHTML = '<span style="color:#71767b;">Nenhuma região na lista</span>';
 			} else {
 				Array.from(config.blockedRegions).sort().forEach((r) => {
 					const row = document.createElement("div");
-					row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 8px;margin:2px 0;background:rgba(255,255,255,0.03);border-radius:6px;";
-					row.innerHTML = `<span>${r} <span style="color:#666;">(S:${blockStats.region[r] || 0} | T:${config.filterTotals?.region?.[r] || 0})</span></span><span style="cursor:pointer;color:#f66;font-size:16px;padding:0 4px;">×</span>`;
+					row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin:2px 0;background:#273340;border-radius:8px;border:1px solid #38444d;";
+					row.innerHTML = `<span style="color:#e7e9ea;">${r} <span style="color:#71767b;">(S:${blockStats.region[r] || 0} | T:${config.filterTotals?.region?.[r] || 0})</span></span><span style="cursor:pointer;color:#f4212e;font-size:16px;padding:0 4px;">×</span>`;
 					row.lastChild.addEventListener("click", () => {
 						config.blockedRegions.delete(r);
 						save();
@@ -1131,12 +1389,12 @@
 			const langList = document.getElementById("list-l");
 			langList.innerHTML = "";
 			if (config.blockedLangs.size === 0) {
-				langList.innerHTML = '<span style="color:#666;">Nenhum idioma na lista</span>';
+				langList.innerHTML = '<span style="color:#71767b;">Nenhum idioma na lista</span>';
 			} else {
 				Array.from(config.blockedLangs).sort().forEach((l) => {
 					const row = document.createElement("div");
-					row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 8px;margin:2px 0;background:rgba(255,255,255,0.03);border-radius:6px;";
-					row.innerHTML = `<span>${LANG_NAMES[l] || l} <span style="color:#666;">(S:${blockStats.lang[l] || 0} | T:${config.filterTotals?.lang?.[l] || 0})</span></span><span style="cursor:pointer;color:#f66;font-size:16px;padding:0 4px;">×</span>`;
+					row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin:2px 0;background:#273340;border-radius:8px;border:1px solid #38444d;";
+					row.innerHTML = `<span style="color:#e7e9ea;">${LANG_NAMES[l] || l} <span style="color:#71767b;">(S:${blockStats.lang[l] || 0} | T:${config.filterTotals?.lang?.[l] || 0})</span></span><span style="cursor:pointer;color:#f4212e;font-size:16px;padding:0 4px;">×</span>`;
 					row.lastChild.addEventListener("click", () => {
 						config.blockedLangs.delete(l);
 						save();
@@ -1179,26 +1437,41 @@
 		// Botões de adicionar
 		document.getElementById("btn-add-c").onclick = () => {
 			const code = document.getElementById("select-c").value;
-			if (!code) return;
+			if (!code) {
+				setStatus("Selecione um país para bloquear");
+				return;
+			}
 			config.blockedCountries.add(code);
 			save(); refreshList(); safeScan();
-			setStatus(`País adicionado: ${CODE_TO_COUNTRY[code] || code}`);
+			setStatus(`País bloqueado: ${CODE_TO_COUNTRY[code] || code}`);
+			document.getElementById("search-c").value = "";
+			document.getElementById("select-c").style.display = "none";
 		};
 
 		document.getElementById("btn-add-r").onclick = () => {
 			const val = document.getElementById("select-r").value;
-			if (!val) return;
+			if (!val) {
+				setStatus("Selecione uma região para bloquear");
+				return;
+			}
 			config.blockedRegions.add(val);
 			save(); refreshList(); safeScan();
-			setStatus(`Região adicionada: ${val}`);
+			setStatus(`Região bloqueada: ${val}`);
+			document.getElementById("search-r").value = "";
+			document.getElementById("select-r").style.display = "none";
 		};
 
 		document.getElementById("btn-add-l").onclick = () => {
 			const val = document.getElementById("select-l").value;
-			if (!val) return;
+			if (!val) {
+				setStatus("Selecione um idioma para bloquear");
+				return;
+			}
 			config.blockedLangs.add(val);
 			save(); refreshList(); safeScan();
-			setStatus(`Idioma adicionado: ${LANG_NAMES[val] || val}`);
+			setStatus(`Idioma bloqueado: ${LANG_NAMES[val] || val}`);
+			document.getElementById("search-l").value = "";
+			document.getElementById("select-l").style.display = "none";
 		};
 
 		// Botões "Adicionar Todos"
@@ -1285,7 +1558,7 @@
 			scanAndHide();
 			scanChatFlags();
 		} catch (e) {
-			console.error("[CleanX] scan error", e);
+			console.error("[X-Sentinel] scan error", e);
 		} finally {
 			isScanning = false;
 		}
@@ -1293,5 +1566,5 @@
 
 	Promise.all([loadKnownFromDB(), loadTotalsFromDB()]).finally(() => start());
 
-	console.log("CleanX v6.1 (PT-BR Swiss Design) pronto");
+	console.log("X-Sentinel v7.0 (PT-BR Swiss Design) pronto");
 })();

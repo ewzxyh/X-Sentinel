@@ -1,4 +1,4 @@
-## CleanX - PT-BR
+## X-Sentinel - PT-BR
 
 Script de usuário pessoal (e extensão do Chrome) para X/Twitter que filtra publicações por país, região ou idioma, com destaque opcional.
 
@@ -32,20 +32,20 @@ As postagens destacadas são óbvias (se não estiverem bloqueadas):
 <img width="1036" height="538" alt="image" src="https://github.com/user-attachments/assets/3b16c614-75b5-4b30-bd5b-65a66701ebd1" />
 
 ### Uso
-1) Userscript: baixe `CleanX.user.js` da seção Releases (ou use `CleanX-user.js` neste repositório) e instale-o no seu gerenciador de userscripts (Tampermonkey/Greasemonkey).
+1) Userscript: baixe `X-Sentinel.user.js` da seção Releases (ou use `X-Sentinel-user.js` neste repositório) e instale-o no seu gerenciador de userscripts (Tampermonkey/Greasemonkey).
 
-2) Extensão do Chrome: baixe o arquivo `CleanX-extension.zip` da seção Releases e carregue-o como uma extensão descompactada em `chrome://extensions` (Modo Desenvolvedor) ou carregue a pasta `extension/` diretamente.
+2) Extensão do Chrome: baixe o arquivo `X-Sentinel-extension.zip` da seção Releases e carregue-o como uma extensão descompactada em `chrome://extensions` (Modo Desenvolvedor) ou carregue a pasta `extension/` diretamente.
 
-3) Abra o X/Twitter e clique no botão 🚫 CleanX em Perfil, na barra de navegação à esquerda.
+3) Abra o X/Twitter e clique no botão 🚫 X-Sentinel em Perfil, na barra de navegação à esquerda.
 
 4) Adicione países/regiões/idiomas; ative a exibição em bloco versus destaque e destaque apenas da região.
 
 5) Recarregue a página para aplicar as alterações; use a opção Exportar Banco de Dados para depuração ou backup.
 
 ### Notas de Desenvolvimento
-- Sem etapa de compilação; edite o arquivo `CleanX-user.js` diretamente.
+- Sem etapa de compilação; edite o arquivo `X-Sentinel-user.js` diretamente.
 
-- Formato opcional: `npx prettier --check "CleanX-user.js"`.
+- Formato opcional: `npx prettier --check "X-Sentinel-user.js"`.
 
 - Armazenamento principal: `localStorage` + IndexedDB (armazenamento `known` para usuários, `stats` para totais).
 

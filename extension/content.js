@@ -3,7 +3,8 @@
 
 	if (!/^https?:\/\/(x|twitter)\.com\//.test(window.location.href)) return;
 
-	const STORAGE_KEY = "xCountryBlocker";
+	const STORAGE_KEY = "xSentinelData";
+	const KNOWN_USERS_KEY = "xSentinelKnownUsers";
 	const defaultTotals = () => ({
 		overall: 0,
 		country: {},
@@ -17,16 +18,19 @@
 		seenRegion: {},
 	});
 	let config = {
-		blockedCountries: new Set(), // ← EMPTY
-		blockedLangs: new Set(), // ← EMPTY
-		blockedRegions: new Set(), // ← EMPTY
-		countryDB: {}, // code -> [usernames]
-		knownUsers: {}, // username -> { accountCountry, accountRegion, usernameChanges, ts }
+		blockedCountries: new Set(),
+		blockedLangs: new Set(),
+		blockedRegions: new Set(),
+		countryDB: {},
+		knownUsers: {},
 		pending: new Set(),
-		filterMode: "block", // "block" | "highlight"
+		displayMode: "both", // "show" = apenas mostrar, "block" = apenas bloquear, "both" = mostrar e bloquear
 		filterTotals: defaultTotals(),
-		highlightRegionDisplayOnly: false,
 		analytics: defaultAnalytics(),
+		// Toggles para cada categoria
+		countryFilterEnabled: true,
+		regionFilterEnabled: true,
+		langFilterEnabled: true,
 	};
 	const fetchQueue = [];
 
@@ -34,14 +38,19 @@
 	let filteredCount = 0;
 	let totalsSaveTimer = null;
 	let nextFetchAllowed = 0;
-	const FETCH_GAP_MS = 3500; // throttle outbound requests
-	const RATE_LIMIT_BACKOFF_MS = 2 * 60 * 1000; // back off 2 minutes on 429
-	const UNKNOWN_RETRY_MS = 10 * 60 * 1000; // retry unknowns after 10m
-	const FOLLOW_SCAN_MAX = 800; // limit following scan
-	const FOLLOW_FETCH_DELAY = 500;
-	const PREFETCH_BATCH = 5;
-	const PREFETCH_INTERVAL_MS = 4000;
-	const blockStats = { country: {}, lang: {}, region: {} }; // session-only counts
+	let scanDebounceTimer = null;
+	let isScanning = false;
+	let apiRequestCount = 0;
+	let lastApiReset = nowTs();
+
+	// Configurações otimizadas para evitar rate limit
+	const FETCH_GAP_MS = 8000; // 8 segundos entre requisições
+	const RATE_LIMIT_BACKOFF_MS = 5 * 60 * 1000; // 5 minutos de espera após rate limit
+	const UNKNOWN_RETRY_MS = 30 * 60 * 1000; // 30 minutos antes de tentar novamente usuário desconhecido
+	const PREFETCH_BATCH = 2; // Apenas 2 requisições por ciclo
+	const PREFETCH_INTERVAL_MS = 10000; // 10 segundos entre ciclos
+	const MAX_REQUESTS_PER_15MIN = 15; // Limite conservador de requisições
+	const blockStats = { country: {}, lang: {}, region: {} };
 	let dbPromise = null;
 	const FIELD_TOGGLES = { withAuxiliaryUserLabels: false };
 	const BEARER_TOKEN =
@@ -54,7 +63,7 @@
 		responsive_web_graphql_skip_user_profile_image_extensions_enabled: true,
 		responsive_web_graphql_timeline_navigation_enabled: true,
 		responsive_web_graphql_timeline_navigation_enabled_elsewhere: true,
-		responsive_web_enhance_cards_enabled: true,
+		responsive_web_graphql_enhance_cards_enabled: true,
 		verified_phone_label_enabled: true,
 		creator_subscriptions_tweet_preview_api_enabled: true,
 		highlights_tweets_tab_ui_enabled: true,
@@ -63,127 +72,52 @@
 		vibe_api_enabled: true,
 	};
 
-	// Full country map (unchanged)
+	// Mapa de nomes em inglês para códigos (usado para parsing da API)
 	const COUNTRY_MAP = {
-		/* same huge list as before */ Afghanistan: "AF",
-		Albania: "AL",
-		Algeria: "DZ",
-		Andorra: "AD",
-		Angola: "AO",
-		Argentina: "AR",
-		Armenia: "AM",
-		Australia: "AU",
-		Austria: "AT",
-		Azerbaijan: "AZ",
-		Bahamas: "BS",
-		Bahrain: "BH",
-		Bangladesh: "BD",
-		Barbados: "BB",
-		Belarus: "BY",
-		Belgium: "BE",
-		Belize: "BZ",
-		Benin: "BJ",
-		Bhutan: "BT",
-		Bolivia: "BO",
-		"Bosnia and Herzegovina": "BA",
-		Botswana: "BW",
-		Brazil: "BR",
-		Bulgaria: "BG",
-		"Burkina Faso": "BF",
-		Burundi: "BI",
-		Cambodia: "KH",
-		Cameroon: "CM",
-		Canada: "CA",
-		Chile: "CL",
-		China: "CN",
-		Colombia: "CO",
-		"Costa Rica": "CR",
-		Croatia: "HR",
-		Cuba: "CU",
-		Cyprus: "CY",
-		Czechia: "CZ",
-		Denmark: "DK",
-		"Dominican Republic": "DO",
-		Ecuador: "EC",
-		Egypt: "EG",
-		"El Salvador": "SV",
-		Estonia: "EE",
-		Ethiopia: "ET",
-		Finland: "FI",
-		France: "FR",
-		Georgia: "GE",
-		Germany: "DE",
-		Ghana: "GH",
-		Greece: "GR",
-		Guatemala: "GT",
-		Honduras: "HN",
-		Hungary: "HU",
-		Iceland: "IS",
-		India: "IN",
-		Indonesia: "ID",
-		Iran: "IR",
-		Iraq: "IQ",
-		Ireland: "IE",
-		Israel: "IL",
-		Italy: "IT",
-		Jamaica: "JM",
-		Japan: "JP",
-		Jordan: "JO",
-		Kazakhstan: "KZ",
-		Kenya: "KE",
-		Kuwait: "KW",
-		Latvia: "LV",
-		Lebanon: "LB",
-		Libya: "LY",
-		Lithuania: "LT",
-		Luxembourg: "LU",
-		Madagascar: "MG",
-		Malaysia: "MY",
-		Maldives: "MV",
-		Mexico: "MX",
-		Monaco: "MC",
-		Morocco: "MA",
-		Nepal: "NP",
-		Netherlands: "NL",
-		"New Zealand": "NZ",
-		Nigeria: "NG",
-		Norway: "NO",
-		Oman: "OM",
-		Pakistan: "PK",
-		Panama: "PA",
-		Paraguay: "PY",
-		Peru: "PE",
-		Philippines: "PH",
-		Poland: "PL",
-		Portugal: "PT",
-		Qatar: "QA",
-		Romania: "RO",
-		Russia: "RU",
-		"Saudi Arabia": "SA",
-		Senegal: "SN",
-		Serbia: "RS",
-		Singapore: "SG",
-		Slovakia: "SK",
-		Slovenia: "SI",
-		"South Africa": "ZA",
-		"South Korea": "KR",
-		Spain: "ES",
-		"Sri Lanka": "LK",
-		Sweden: "SE",
-		Switzerland: "CH",
-		Taiwan: "TW",
-		Thailand: "TH",
-		Tunisia: "TN",
-		Turkey: "TR",
-		Ukraine: "UA",
-		"United Arab Emirates": "AE",
-		"United Kingdom": "GB",
-		"United States": "US",
-		Uruguay: "UY",
-		Venezuela: "VE",
-		Vietnam: "VN",
-		Yemen: "YE",
-		Zimbabwe: "ZW",
+		Afghanistan: "AF", Albania: "AL", Algeria: "DZ", Andorra: "AD", Angola: "AO", Argentina: "AR", Armenia: "AM", Australia: "AU", Austria: "AT", Azerbaijan: "AZ", Bahamas: "BS", Bahrain: "BH", Bangladesh: "BD", Barbados: "BB", Belarus: "BY", Belgium: "BE", Belize: "BZ", Benin: "BJ", Bhutan: "BT", Bolivia: "BO", "Bosnia and Herzegovina": "BA", Botswana: "BW", Brazil: "BR", Bulgaria: "BG", "Burkina Faso": "BF", Burundi: "BI", Cambodia: "KH", Cameroon: "CM", Canada: "CA", Chile: "CL", China: "CN", Colombia: "CO", "Costa Rica": "CR", Croatia: "HR", Cuba: "CU", Cyprus: "CY", Czechia: "CZ", Denmark: "DK", "Dominican Republic": "DO", Ecuador: "EC", Egypt: "EG", "El Salvador": "SV", Estonia: "EE", Ethiopia: "ET", Finland: "FI", France: "FR", Georgia: "GE", Germany: "DE", Ghana: "GH", Greece: "GR", Guatemala: "GT", Honduras: "HN", Hungary: "HU", Iceland: "IS", India: "IN", Indonesia: "ID", Iran: "IR", Iraq: "IQ", Ireland: "IE", Israel: "IL", Italy: "IT", Jamaica: "JM", Japan: "JP", Jordan: "JO", Kazakhstan: "KZ", Kenya: "KE", Kuwait: "KW", Latvia: "LV", Lebanon: "LB", Libya: "LY", Lithuania: "LT", Luxembourg: "LU", Madagascar: "MG", Malaysia: "MY", Maldives: "MV", Mexico: "MX", Monaco: "MC", Morocco: "MA", Nepal: "NP", Netherlands: "NL", "New Zealand": "NZ", Nigeria: "NG", Norway: "NO", Oman: "OM", Pakistan: "PK", Panama: "PA", Paraguay: "PY", Peru: "PE", Philippines: "PH", Poland: "PL", Portugal: "PT", Qatar: "QA", Romania: "RO", Russia: "RU", "Saudi Arabia": "SA", Senegal: "SN", Serbia: "RS", Singapore: "SG", Slovakia: "SK", Slovenia: "SI", "South Africa": "ZA", "South Korea": "KR", Spain: "ES", "Sri Lanka": "LK", Sweden: "SE", Switzerland: "CH", Taiwan: "TW", Thailand: "TH", Tunisia: "TN", Turkey: "TR", Ukraine: "UA", "United Arab Emirates": "AE", "United Kingdom": "GB", "United States": "US", Uruguay: "UY", Venezuela: "VE", Vietnam: "VN", Yemen: "YE", Zimbabwe: "ZW",
+	};
+
+	// Nomes dos países em português
+	const CODE_TO_COUNTRY = {
+		"AF": "Afeganistão", "AL": "Albânia", "DZ": "Argélia", "AD": "Andorra", "AO": "Angola",
+		"AR": "Argentina", "AM": "Armênia", "AU": "Austrália", "AT": "Áustria", "AZ": "Azerbaijão",
+		"BS": "Bahamas", "BH": "Bahrein", "BD": "Bangladesh", "BB": "Barbados", "BY": "Bielorrússia",
+		"BE": "Bélgica", "BZ": "Belize", "BJ": "Benim", "BT": "Butão", "BO": "Bolívia",
+		"BA": "Bósnia e Herzegovina", "BW": "Botsuana", "BR": "Brasil", "BG": "Bulgária",
+		"BF": "Burkina Faso", "BI": "Burundi", "KH": "Camboja", "CM": "Camarões", "CA": "Canadá",
+		"CL": "Chile", "CN": "China", "CO": "Colômbia", "CR": "Costa Rica", "HR": "Croácia",
+		"CU": "Cuba", "CY": "Chipre", "CZ": "Tchéquia", "DK": "Dinamarca", "DO": "República Dominicana",
+		"EC": "Equador", "EG": "Egito", "SV": "El Salvador", "EE": "Estônia", "ET": "Etiópia",
+		"FI": "Finlândia", "FR": "França", "GE": "Geórgia", "DE": "Alemanha", "GH": "Gana",
+		"GR": "Grécia", "GT": "Guatemala", "HN": "Honduras", "HU": "Hungria", "IS": "Islândia",
+		"IN": "Índia", "ID": "Indonésia", "IR": "Irã", "IQ": "Iraque", "IE": "Irlanda",
+		"IL": "Israel", "IT": "Itália", "JM": "Jamaica", "JP": "Japão", "JO": "Jordânia",
+		"KZ": "Cazaquistão", "KE": "Quênia", "KW": "Kuwait", "LV": "Letônia", "LB": "Líbano",
+		"LY": "Líbia", "LT": "Lituânia", "LU": "Luxemburgo", "MG": "Madagascar", "MY": "Malásia",
+		"MV": "Maldivas", "MX": "México", "MC": "Mônaco", "MA": "Marrocos", "NP": "Nepal",
+		"NL": "Países Baixos", "NZ": "Nova Zelândia", "NG": "Nigéria", "NO": "Noruega", "OM": "Omã",
+		"PK": "Paquistão", "PA": "Panamá", "PY": "Paraguai", "PE": "Peru", "PH": "Filipinas",
+		"PL": "Polônia", "PT": "Portugal", "QA": "Catar", "RO": "Romênia", "RU": "Rússia",
+		"SA": "Arábia Saudita", "SN": "Senegal", "RS": "Sérvia", "SG": "Singapura", "SK": "Eslováquia",
+		"SI": "Eslovênia", "ZA": "África do Sul", "KR": "Coreia do Sul", "ES": "Espanha",
+		"LK": "Sri Lanka", "SE": "Suécia", "CH": "Suíça", "TW": "Taiwan", "TH": "Tailândia",
+		"TN": "Tunísia", "TR": "Turquia", "UA": "Ucrânia", "AE": "Emirados Árabes Unidos",
+		"GB": "Reino Unido", "US": "Estados Unidos", "UY": "Uruguai", "VE": "Venezuela",
+		"VN": "Vietnã", "YE": "Iêmen", "ZW": "Zimbábue"
+	};
+
+	const LANG_NAMES = {
+		hi: "Hindi",
+		ta: "Tâmil",
+		te: "Telugu",
+		kn: "Canarês",
+		ml: "Malaiala",
+		he: "Hebraico",
+		ur: "Urdu",
+		pa: "Punjabi",
+		ar: "Árabe",
+		fa: "Persa",
+		ps: "Pashto"
 	};
 
 	const LANG_SCRIPTS = {
@@ -201,238 +135,17 @@
 	};
 
 	const REGION_DEFS = [
-		{
-			name: "Africa",
-			codes: [
-				"DZ",
-				"AO",
-				"BJ",
-				"BW",
-				"BF",
-				"BI",
-				"CM",
-				"CV",
-				"CF",
-				"TD",
-				"KM",
-				"CG",
-				"CD",
-				"DJ",
-				"EG",
-				"GQ",
-				"ER",
-				"ET",
-				"GA",
-				"GM",
-				"GH",
-				"GN",
-				"GW",
-				"CI",
-				"KE",
-				"LS",
-				"LR",
-				"LY",
-				"MG",
-				"MW",
-				"ML",
-				"MR",
-				"MU",
-				"MA",
-				"MZ",
-				"NA",
-				"NE",
-				"NG",
-				"RE",
-				"RW",
-				"ST",
-				"SN",
-				"SC",
-				"SL",
-				"SO",
-				"ZA",
-				"SS",
-				"SD",
-				"SZ",
-				"TZ",
-				"TG",
-				"TN",
-				"UG",
-				"YT",
-				"ZM",
-				"ZW",
-			],
-		},
-		{
-			name: "Middle East and North Africa",
-			codes: [
-				"IR",
-				"IQ",
-				"IL",
-				"JO",
-				"LB",
-				"SA",
-				"AE",
-				"QA",
-				"BH",
-				"KW",
-				"EG",
-				"MA",
-				"DZ",
-				"TN",
-				"LY",
-				"TR",
-				"OM",
-				"YE",
-				"SY",
-				"PS",
-			],
-		},
-		{
-			name: "South Asia",
-			codes: ["IN", "PK", "BD", "LK", "NP", "AF", "MV", "BT"],
-		},
-		{
-			name: "Southeast Asia",
-			codes: ["SG", "TH", "VN", "MY", "ID", "PH", "KH", "LA", "MM", "BN"],
-		},
-		{
-			name: "East Asia and Pacific",
-			codes: [
-				"CN",
-				"JP",
-				"KR",
-				"TW",
-				"PH",
-				"ID",
-				"TH",
-				"VN",
-				"MY",
-				"SG",
-				"AU",
-				"NZ",
-				"HK",
-				"MO",
-				"PG",
-				"FJ",
-			],
-		},
-		{
-			name: "Latin America",
-			codes: [
-				"MX",
-				"BR",
-				"AR",
-				"CL",
-				"CO",
-				"PE",
-				"VE",
-				"UY",
-				"PY",
-				"BO",
-				"CR",
-				"PA",
-				"DO",
-				"HN",
-				"GT",
-				"SV",
-				"CU",
-				"EC",
-				"PR",
-				"JM",
-				"TT",
-				"NI",
-			],
-		},
-		{
-			name: "South America",
-			codes: ["AR", "BR", "CL", "CO", "PE", "VE", "UY", "PY", "BO", "EC", "GY", "SR"],
-		},
-		{
-			name: "Eastern Europe",
-			codes: [
-				"RU",
-				"UA",
-				"LV",
-				"RO",
-				"PL",
-				"HU",
-				"BG",
-				"CZ",
-				"SK",
-				"SI",
-				"RS",
-				"HR",
-				"BA",
-				"BY",
-				"LT",
-				"EE",
-				"MD",
-				"GE",
-			],
-		},
-		{
-			name: "Western Europe",
-			codes: [
-				"GB",
-				"FR",
-				"DE",
-				"ES",
-				"PT",
-				"IT",
-				"NL",
-				"BE",
-				"CH",
-				"AT",
-				"IE",
-				"NO",
-				"SE",
-				"DK",
-				"FI",
-				"LU",
-				"GR",
-			],
-		},
-		{
-			name: "Europe",
-			codes: [
-				"GB",
-				"FR",
-				"DE",
-				"ES",
-				"PT",
-				"IT",
-				"NL",
-				"BE",
-				"CH",
-				"AT",
-				"IE",
-				"NO",
-				"SE",
-				"DK",
-				"FI",
-				"LU",
-				"CZ",
-				"PL",
-				"HU",
-				"RO",
-				"BG",
-				"RS",
-				"HR",
-				"SI",
-				"SK",
-				"UA",
-				"LT",
-				"LV",
-				"EE",
-				"GR",
-				"MD",
-				"GE",
-			],
-		},
-		{
-			name: "North America",
-			codes: ["US", "CA", "MX"],
-		},
+		{ name: "África", codes: ["DZ", "AO", "BJ", "BW", "BF", "BI", "CM", "CV", "CF", "TD", "KM", "CG", "CD", "DJ", "EG", "GQ", "ER", "ET", "GA", "GM", "GH", "GN", "GW", "CI", "KE", "LS", "LR", "LY", "MG", "MW", "ML", "MR", "MU", "MA", "MZ", "NA", "NE", "NG", "RE", "RW", "ST", "SN", "SC", "SL", "SO", "ZA", "SS", "SD", "SZ", "TZ", "TG", "TN", "UG", "YT", "ZM", "ZW"] },
+		{ name: "Oriente Médio e Norte da África", codes: ["IR", "IQ", "IL", "JO", "LB", "SA", "AE", "QA", "BH", "KW", "EG", "MA", "DZ", "TN", "LY", "TR", "OM", "YE", "SY", "PS"] },
+		{ name: "Sul da Ásia", codes: ["IN", "PK", "BD", "LK", "NP", "AF", "MV", "BT"] },
+		{ name: "Sudeste Asiático", codes: ["SG", "TH", "VN", "MY", "ID", "PH", "KH", "LA", "MM", "BN"] },
+		{ name: "Leste Asiático e Pacífico", codes: ["CN", "JP", "KR", "TW", "PH", "ID", "TH", "VN", "MY", "SG", "AU", "NZ", "HK", "MO", "PG", "FJ"] },
+		{ name: "América Latina", codes: ["MX", "BR", "AR", "CL", "CO", "PE", "VE", "UY", "PY", "BO", "CR", "PA", "DO", "HN", "GT", "SV", "CU", "EC", "PR", "JM", "TT", "NI"] },
+		{ name: "América do Sul", codes: ["AR", "BR", "CL", "CO", "PE", "VE", "UY", "PY", "BO", "EC", "GY", "SR"] },
+		{ name: "Europa Oriental", codes: ["RU", "UA", "LV", "RO", "PL", "HU", "BG", "CZ", "SK", "SI", "RS", "HR", "BA", "BY", "LT", "EE", "MD", "GE"] },
+		{ name: "Europa Ocidental", codes: ["GB", "FR", "DE", "ES", "PT", "IT", "NL", "BE", "CH", "AT", "IE", "NO", "SE", "DK", "FI", "LU", "GR"] },
+		{ name: "Europa", codes: ["GB", "FR", "DE", "ES", "PT", "IT", "NL", "BE", "CH", "AT", "IE", "NO", "SE", "DK", "FI", "LU", "CZ", "PL", "HU", "RO", "BG", "RS", "HR", "SI", "SK", "UA", "LT", "LV", "EE", "GR", "MD", "GE"] },
+		{ name: "América do Norte", codes: ["US", "CA", "MX"] },
 	];
 
 	function load() {
@@ -443,35 +156,53 @@
 			config.blockedLangs = new Set(parsed.blockedLangs || []);
 			config.blockedRegions = new Set(parsed.blockedRegions || []);
 			config.countryDB = parsed.countryDB || {};
-			config.filterMode =
-				parsed.filterMode === "highlight" ? "highlight" : "block";
-			config.filterTotals = {
-				...defaultTotals(),
-				...(parsed.filterTotals || {}),
-			};
-			config.highlightRegionDisplayOnly = Boolean(
-				parsed.highlightRegionDisplayOnly,
-			);
-			config.analytics = {
-				...defaultAnalytics(),
-				...(parsed.analytics || {}),
-			};
-			if (parsed.knownUsers) {
-				config.knownUsers = {};
-				for (const [k, v] of Object.entries(parsed.knownUsers)) {
-					config.knownUsers[k] = {
-						accountCountry: v.accountCountry || null,
-						accountRegion: v.accountRegion || null,
-						usernameChanges:
-							typeof v.usernameChanges === "number"
-								? v.usernameChanges
-								: null,
-						ts: v.ts || 0,
-					};
+			config.displayMode = ["show", "block", "both"].includes(parsed.displayMode) ? parsed.displayMode : "both";
+			config.filterTotals = { ...defaultTotals(), ...(parsed.filterTotals || {}) };
+			config.analytics = { ...defaultAnalytics(), ...(parsed.analytics || {}) };
+			config.countryFilterEnabled = parsed.countryFilterEnabled !== false;
+			config.regionFilterEnabled = parsed.regionFilterEnabled !== false;
+			config.langFilterEnabled = parsed.langFilterEnabled !== false;
+		}
+		// Carrega usuários conhecidos do localStorage (backup do IndexedDB)
+		loadKnownUsersFromLocalStorage();
+	}
+
+	function loadKnownUsersFromLocalStorage() {
+		try {
+			const savedUsers = localStorage.getItem(KNOWN_USERS_KEY);
+			if (savedUsers) {
+				const parsed = JSON.parse(savedUsers);
+				for (const [k, v] of Object.entries(parsed)) {
+					if (!config.knownUsers[k]) {
+						config.knownUsers[k] = {
+							accountCountry: v.accountCountry || null,
+							accountRegion: v.accountRegion || null,
+							usernameChanges: typeof v.usernameChanges === "number" ? v.usernameChanges : null,
+							ts: v.ts || 0,
+						};
+					}
 				}
 			}
+		} catch (e) {
+			console.warn("[X-Sentinel] loadKnownUsersFromLocalStorage failed", e);
 		}
 	}
+
+	function saveKnownUsersToLocalStorage() {
+		try {
+			// Salva apenas os usuários com país conhecido para economizar espaço
+			const usersWithCountry = {};
+			for (const [k, v] of Object.entries(config.knownUsers)) {
+				if (v.accountCountry) {
+					usersWithCountry[k] = v;
+				}
+			}
+			localStorage.setItem(KNOWN_USERS_KEY, JSON.stringify(usersWithCountry));
+		} catch (e) {
+			console.warn("[X-Sentinel] saveKnownUsersToLocalStorage failed", e);
+		}
+	}
+
 	function save() {
 		localStorage.setItem(
 			STORAGE_KEY,
@@ -480,25 +211,30 @@
 				blockedLangs: Array.from(config.blockedLangs),
 				blockedRegions: Array.from(config.blockedRegions),
 				countryDB: config.countryDB,
-				filterMode: config.filterMode,
+				displayMode: config.displayMode,
 				filterTotals: config.filterTotals,
-				highlightRegionDisplayOnly: config.highlightRegionDisplayOnly,
 				analytics: config.analytics,
+				countryFilterEnabled: config.countryFilterEnabled,
+				regionFilterEnabled: config.regionFilterEnabled,
+				langFilterEnabled: config.langFilterEnabled,
 			}),
 		);
 	}
 
-	function exportDB() {
-		return JSON.stringify(
-			{
-				countryDB: config.countryDB,
-				knownUsers: config.knownUsers,
-				filterTotals: config.filterTotals,
-				highlightRegionDisplayOnly: config.highlightRegionDisplayOnly,
-			},
-			null,
-			2,
-		);
+	// Verifica se ainda tem cota de requisições
+	function canMakeApiRequest() {
+		const now = nowTs();
+		// Reseta contador a cada 15 minutos
+		if (now - lastApiReset > 15 * 60 * 1000) {
+			apiRequestCount = 0;
+			lastApiReset = now;
+		}
+		return apiRequestCount < MAX_REQUESTS_PER_15MIN && now >= nextFetchAllowed;
+	}
+
+	function incrementApiCounter() {
+		apiRequestCount++;
+		console.log(`[X-Sentinel] API requests: ${apiRequestCount}/${MAX_REQUESTS_PER_15MIN}`);
 	}
 
 	function openDB() {
@@ -530,21 +266,22 @@
 				req.onsuccess = () => resolve(req.result || []);
 				req.onerror = () => reject(req.error);
 			});
-			config.knownUsers = {};
+			// Mantém dados existentes do localStorage
 			for (const row of rows) {
 				if (!row?.user) continue;
 				config.knownUsers[row.user] = {
 					accountCountry: row.accountCountry || null,
 					accountRegion: row.accountRegion || null,
-					usernameChanges:
-						typeof row.usernameChanges === "number"
-							? row.usernameChanges
-							: null,
+					usernameChanges: typeof row.usernameChanges === "number" ? row.usernameChanges : null,
 					ts: row.ts || 0,
 				};
 			}
+			// Sincroniza com localStorage
+			saveKnownUsersToLocalStorage();
+			const userCount = Object.keys(config.knownUsers).filter(k => config.knownUsers[k]?.accountCountry).length;
+			console.log(`[X-Sentinel] ${userCount} usuários em cache (economia de requisições)`);
 		} catch (e) {
-			console.warn("[XCB] loadKnownFromDB failed", e);
+			console.warn("[X-Sentinel] loadKnownFromDB failed", e);
 		}
 	}
 
@@ -556,14 +293,11 @@
 				user,
 				accountCountry: data.accountCountry || null,
 				accountRegion: data.accountRegion || null,
-				usernameChanges:
-					typeof data.usernameChanges === "number"
-						? data.usernameChanges
-						: null,
+				usernameChanges: typeof data.usernameChanges === "number" ? data.usernameChanges : null,
 				ts: data.ts || nowTs(),
 			});
 		} catch (e) {
-			console.warn("[XCB] saveKnownToDB failed", e);
+			console.warn("[X-Sentinel] saveKnownToDB failed", e);
 		}
 	}
 
@@ -586,13 +320,10 @@
 					session: totals.session || 0,
 				};
 				filteredCount = totals.session || 0;
-				config.analytics = {
-					...defaultAnalytics(),
-					...(totals.analytics || {}),
-				};
+				config.analytics = { ...defaultAnalytics(), ...(totals.analytics || {}) };
 			}
 		} catch (e) {
-			console.warn("[XCB] loadTotalsFromDB failed", e);
+			console.warn("[X-Sentinel] loadTotalsFromDB failed", e);
 		} finally {
 			if (!config.filterTotals) config.filterTotals = defaultTotals();
 		}
@@ -613,7 +344,7 @@
 				updated: nowTs(),
 			});
 		} catch (e) {
-			console.warn("[XCB] saveTotalsToDB failed", e);
+			console.warn("[X-Sentinel] saveTotalsToDB failed", e);
 		}
 	}
 
@@ -633,55 +364,23 @@
 	}
 
 	function extractUsername(tweet) {
-		const link =
-			tweet.querySelector('div[data-testid="User-Name"] a[href]') ||
-			tweet.querySelector('a[href*="/status/"]');
+		const link = tweet.querySelector('div[data-testid="User-Name"] a[href]') || tweet.querySelector('a[href*="/status/"]');
 		if (!link) return null;
-
 		let href = link.getAttribute("href") || "";
 		if (/^https?:\/\//i.test(href)) {
 			try {
 				href = new URL(href).pathname;
-			} catch (e) {
-				/* ignore */
-			}
+			} catch (e) { }
 		}
 		const parts = href.split("/").filter(Boolean);
 		if (!parts.length) return null;
-		// Prefer the first non-reserved segment
 		const candidate = parts[0];
-		if (
-			["i", "home", "explore", "notifications", "messages", "search"].includes(
-				candidate,
-			)
-		)
-			return null;
+		if (["i", "home", "explore", "notifications", "messages", "search"].includes(candidate)) return null;
 		return normUser(candidate);
 	}
 
-	function resolveCountryCode(input) {
-		if (!input) return null;
-		const raw = input.trim();
-		if (!raw) return null;
-		const upper = raw.toUpperCase();
-		if (
-			upper.length === 2 &&
-			COUNTRY_MAP &&
-			Object.values(COUNTRY_MAP).includes(upper)
-		)
-			return upper;
-		// fuzzy by country name substring
-		const found = Object.entries(COUNTRY_MAP).find(([name]) =>
-			name.toLowerCase().includes(raw.toLowerCase()),
-		);
-		return found ? found[1] : null;
-	}
-
-	// ← everything else (fetch, hide, UI, scanning) is 100% identical to v5.0 above ←
-	// (just copy the full body from the previous working script, only the config defaults changed)
-
 	function hasBlockedLang(text) {
-		if (!text) return false;
+		if (!text || !config.langFilterEnabled) return false;
 		for (const lang of config.blockedLangs)
 			if (LANG_SCRIPTS[lang]?.test(text)) return lang;
 		return false;
@@ -705,156 +404,60 @@
 		return null;
 	}
 
-	function resolveRegionName(input) {
-		if (!input) return null;
-		const norm = input.trim().toLowerCase();
-		if (!norm) return null;
-		const found = REGION_DEFS.find(
-			(def) => def.name.toLowerCase() === norm,
-		);
-		if (found) return found.name;
-		return null;
-	}
+	// Renderiza bandeira e nome do país ao lado do nome do usuário
+	function renderCountryBadge(tweet, countryCode) {
+		// Só mostra se o modo for "show" ou "both"
+		const shouldShow = config.displayMode === "show" || config.displayMode === "both";
 
-	function renderFlag(tweet, countryCode) {
-		// Feature disabled: keep cleanup only
-		const flagWrapId = tweet.dataset.xcbFlagId;
-		if (flagWrapId) {
-			const existing = document.getElementById(flagWrapId);
-			if (existing) existing.remove();
-			delete tweet.dataset.xcbFlagId;
+		const userNameDiv = tweet.querySelector('div[data-testid="User-Name"]');
+		if (!userNameDiv) return;
+
+		const existingBadgeId = tweet.dataset.xcbCountryBadgeId;
+		if (existingBadgeId) {
+			const existing = document.getElementById(existingBadgeId);
+			if (existing) {
+				if (!countryCode || !shouldShow) {
+					existing.remove();
+					delete tweet.dataset.xcbCountryBadgeId;
+					return;
+				}
+				const expectedText = `${countryCodeToFlag(countryCode)} [${CODE_TO_COUNTRY[countryCode] || countryCode}]`;
+				if (existing.textContent === expectedText) {
+					return;
+				}
+				existing.remove();
+				delete tweet.dataset.xcbCountryBadgeId;
+			}
 		}
-		return;
-	}
 
-	function flagPalette(code) {
-		const c = (code || "").toUpperCase();
-		const table = {
-			US: { primary: "#b22234", secondary: "#3c3b6e" },
-			CA: { primary: "#d52b1e", secondary: "#ffffff" },
-			GB: { primary: "#c8102e", secondary: "#012169" },
-			FR: { primary: "#0055a4", secondary: "#ef4135" },
-			DE: { primary: "#000000", secondary: "#d00" },
-			IT: { primary: "#009246", secondary: "#ce2b37" },
-			ES: { primary: "#aa151b", secondary: "#f1bf00" },
-			NL: { primary: "#ae1c28", secondary: "#21468b" },
-			SE: { primary: "#006aa7", secondary: "#fecc00" },
-			NO: { primary: "#ba0c2f", secondary: "#00205b" },
-			FI: { primary: "#003580", secondary: "#ffffff" },
-			DK: { primary: "#c8102e", secondary: "#ffffff" },
-			RU: { primary: "#0039a6", secondary: "#d52b1e" },
-			UA: { primary: "#0057b7", secondary: "#ffd700" },
-			PL: { primary: "#dc143c", secondary: "#ffffff" },
-			CN: { primary: "#de2910", secondary: "#ffde00" },
-			JP: { primary: "#ffffff", secondary: "#bc002d" },
-			KR: { primary: "#003478", secondary: "#c60c30" },
-			AU: { primary: "#00247d", secondary: "#ff0000" },
-			NZ: { primary: "#00247d", secondary: "#ff0000" },
-			BR: { primary: "#009c3b", secondary: "#ffdf00" },
-			MX: { primary: "#006341", secondary: "#ce1126" },
-			AR: { primary: "#74acdf", secondary: "#f6b40e" },
-			IN: { primary: "#ff9933", secondary: "#128807" },
-			SA: { primary: "#006c35", secondary: "#ffffff" },
-			IL: { primary: "#0038b8", secondary: "#ffffff" },
-			IR: { primary: "#239f40", secondary: "#da0000" },
-			TR: { primary: "#e30a17", secondary: "#ffffff" },
-			ZA: { primary: "#007749", secondary: "#ffb612" },
-			NG: { primary: "#008753", secondary: "#ffffff" },
-			KE: { primary: "#006600", secondary: "#b22222" },
-			EG: { primary: "#ce1126", secondary: "#000000" },
-			ID: { primary: "#ce1126", secondary: "#ffffff" },
-			PH: { primary: "#0038a8", secondary: "#ce1126" },
-			SG: { primary: "#e0001b", secondary: "#ffffff" },
-			TH: { primary: "#2d2a4a", secondary: "#a51931" },
-			VN: { primary: "#da251d", secondary: "#ffde00" },
-		};
-		const entry = table[c] || table[(c || "").slice(0, 2)] || {
-			primary: "#ff4d4f",
-			secondary: "#ffffff",
-		};
-		return {
-			primary: entry.primary,
-			secondary: entry.secondary,
-			shadow: `${entry.primary}55`,
-			background: `${entry.secondary}1f`,
-		};
-	}
+		if (!countryCode || !shouldShow) return;
 
-	function addFlagOverlay(tweet, countryCode) {
-		if (!countryCode) return;
 		const flag = countryCodeToFlag(countryCode);
-		if (!flag) return;
-		const existingId = tweet.dataset.xcbOverlayId;
-		if (existingId) {
-			const existing = document.getElementById(existingId);
-			if (existing) existing.remove();
-			delete tweet.dataset.xcbOverlayId;
-		}
-		const overlay = document.createElement("div");
-		const id = `xcb-overlay-${Math.random().toString(36).slice(2, 9)}`;
-		overlay.id = id;
-		overlay.textContent = flag;
-		overlay.style =
-			"position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:220px;opacity:0.11;pointer-events:none;user-select:none;filter:saturate(0.9);z-index:1;overflow:hidden;line-height:1;";
-		overlay.style.width = "100%";
-		overlay.style.height = "100%";
-		overlay.style.transform = "scale(1.1)";
-		tweet.appendChild(overlay);
-		tweet.dataset.xcbOverlayId = id;
-	}
+		const countryName = CODE_TO_COUNTRY[countryCode] || countryCode;
 
-	function renderFooterInfo(tweet, countryCode, usernameChanges) {
-		const rowId = tweet.dataset.xcbFooterId;
-		const hasCountry = Boolean(countryCode);
-		const hasChanges = Number.isFinite(usernameChanges);
-		if (!hasCountry && !hasChanges) {
-			if (rowId) {
-				const existing = document.getElementById(rowId);
-				if (existing) existing.remove();
-				delete tweet.dataset.xcbFooterId;
-				delete tweet.dataset.xcbFooterContent;
-			}
-			return;
+		const badge = document.createElement("span");
+		const id = `xcb-country-badge-${Math.random().toString(36).slice(2, 9)}`;
+		badge.id = id;
+		badge.className = "xcb-country-badge";
+		badge.textContent = `${flag} [${countryName}]`;
+		badge.style.cssText = `
+			font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", system-ui, -apple-system, sans-serif;
+			font-size: 13px;
+			color: rgb(113, 118, 123);
+			margin-left: 4px;
+			white-space: nowrap;
+			font-weight: bold;
+		`;
+
+		const spans = userNameDiv.querySelectorAll('span:not(.xcb-country-badge)');
+		if (spans.length > 0) {
+			const lastSpan = spans[spans.length - 1];
+			lastSpan.parentNode.insertBefore(badge, lastSpan.nextSibling);
+		} else {
+			userNameDiv.appendChild(badge);
 		}
-		const parts = [];
-		if (hasCountry) {
-			const flag = countryCodeToFlag(countryCode) || countryCode;
-			const fullName =
-				Object.keys(COUNTRY_MAP).find(
-					(name) => COUNTRY_MAP[name] === countryCode,
-				) || countryCode;
-			parts.push(`Country: ${flag} ${fullName}`);
-		}
-		if (hasChanges) {
-			parts.push(`Username changes: ${usernameChanges}`);
-		}
-		const content = parts.join(" · ");
-		if (!content) return;
-		if (tweet.dataset.xcbFooterContent === content && rowId) {
-			const existing = document.getElementById(rowId);
-			if (existing) return;
-		}
-		const replyBtn = tweet.querySelector('[data-testid="reply"]');
-		const actionGroup = replyBtn?.closest('div[role="group"]');
-		const actionWrapper = actionGroup?.parentElement || actionGroup || tweet;
-		let row = rowId ? document.getElementById(rowId) : null;
-		if (!row) {
-			row = document.createElement("div");
-			const id = `xcb-footer-${Math.random().toString(36).slice(2, 9)}`;
-			row.id = id;
-			row.style =
-				"display:flex;flex-wrap:wrap;gap:12px;padding:6px 12px 4px;margin-top:2px;font-size:12px;color:rgb(170,184,194);";
-			tweet.dataset.xcbFooterId = id;
-		}
-		if (row.textContent !== content) row.textContent = content;
-		tweet.dataset.xcbFooterContent = content;
-		if (row.parentNode !== actionWrapper) {
-			if (actionGroup && actionGroup.parentNode === actionWrapper) {
-				actionWrapper.insertBefore(row, actionGroup.nextSibling);
-			} else {
-				actionWrapper.appendChild(row);
-			}
-		}
+
+		tweet.dataset.xcbCountryBadgeId = id;
 	}
 
 	function recordSeen(countryCode, regionName, tweet) {
@@ -863,155 +466,53 @@
 		tweet.dataset.xcbSeenCounted = "1";
 		config.analytics = config.analytics || defaultAnalytics();
 		config.analytics.seenTotal = (config.analytics.seenTotal || 0) + 1;
-		if (countryCode) {
-			config.analytics.seenCountry[countryCode] =
-				(config.analytics.seenCountry[countryCode] || 0) + 1;
-		}
-		if (regionName) {
-			config.analytics.seenRegion[regionName] =
-				(config.analytics.seenRegion[regionName] || 0) + 1;
-		}
+		if (countryCode) config.analytics.seenCountry[countryCode] = (config.analytics.seenCountry[countryCode] || 0) + 1;
+		if (regionName) config.analytics.seenRegion[regionName] = (config.analytics.seenRegion[regionName] || 0) + 1;
 		scheduleTotalsSave();
-	}
-
-	async function fetchFollowingPage(cursor) {
-		const host = window.location.host || "x.com";
-		const url = `https://${host}/i/api/1.1/friends/list.json?count=200&skip_status=true&include_user_entities=false${
-			cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""
-		}`;
-		const resp = await fetch(url, {
-			credentials: "include",
-			headers: {
-				"x-csrf-token": getCsrfToken(),
-				authorization: `Bearer ${BEARER_TOKEN}`,
-				"x-twitter-active-user": "yes",
-				"x-twitter-auth-type": "OAuth2Session",
-				"content-type": "application/json",
-			},
-		});
-		const body = await resp.json();
-		return {
-			users: (body.users || []).map((u) => normUser(u.screen_name || "")),
-			next: body.next_cursor_str || null,
-		};
-	}
-
-	async function fetchCountryInfo(user) {
-		const host = window.location.host || "x.com";
-		const url = `https://${host}/i/api/graphql/${ABOUT_QUERY_ID}/AboutAccountQuery?variables=${encodeURIComponent(
-			JSON.stringify({ screenName: user }),
-		)}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}&fieldToggles=${encodeURIComponent(
-			JSON.stringify(FIELD_TOGGLES),
-		)}`;
-		try {
-			const resp = await fetch(url, {
-				credentials: "include",
-				method: "GET",
-				headers: {
-					"x-csrf-token": getCsrfToken(),
-					authorization: `Bearer ${BEARER_TOKEN}`,
-					"content-type": "application/json",
-					"x-twitter-active-user": "yes",
-					"x-twitter-auth-type": "OAuth2Session",
-					"x-twitter-client-language": navigator.language || "en",
-				},
-			});
-			const body = await resp.json();
-			const info = parseProfileFromJson(body);
-			return info.accountCountry || null;
-		} catch (e) {
-			console.warn("[XCB] fetchCountryInfo failed", user, e);
-			return null;
-		}
-	}
-
-	async function analyzeFollowing(updateStatus) {
-		try {
-			updateStatus("Fetching following list…");
-			let cursor = null;
-			const users = [];
-			do {
-				const { users: page, next } = await fetchFollowingPage(cursor);
-				users.push(...page);
-				cursor = next && next !== "0" ? next : null;
-			} while (cursor && users.length < FOLLOW_SCAN_MAX);
-			updateStatus(`Fetched ${users.length} accounts. Resolving countries…`);
-
-			const summary = {};
-			for (let i = 0; i < users.length; i += 1) {
-				const u = users[i];
-				let country = config.knownUsers[u]?.accountCountry || null;
-				if (!country) {
-					country = await fetchCountryInfo(u);
-					await new Promise((r) => setTimeout(r, FOLLOW_FETCH_DELAY));
-				}
-				if (!country) continue;
-				if (!summary[country]) summary[country] = [];
-				if (!summary[country].includes(u)) summary[country].push(u);
-				updateStatus(
-					`Resolved ${i + 1}/${users.length}… (${country} ${countryCodeToFlag(
-						country,
-					) || ""})`,
-				);
-			}
-
-			const reportDiv = document.getElementById("xcb-following-report");
-			if (reportDiv) {
-				const entries = Object.entries(summary).sort(
-					(a, b) => b[1].length - a[1].length,
-				);
-				reportDiv.innerHTML = entries
-					.map(
-						([code, list]) =>
-							`<div style="margin:4px 0;"><strong>${countryCodeToFlag(code) || ""} ${
-								Object.keys(COUNTRY_MAP).find(
-									(name) => COUNTRY_MAP[name] === code,
-								) || code
-							}</strong> (${list.length}): ${list
-								.slice(0, 30)
-								.map(
-									(u) =>
-										`<a href="https://x.com/${u}" target="_blank" rel="noopener noreferrer" style="color:#1d9bf0;text-decoration:none;">@${u}</a>`,
-								)
-								.join(", ")}${list.length > 30 ? "…" : ""}</div>`,
-					)
-					.join("") || "No countries resolved.";
-			}
-			updateStatus("Following analysis complete.");
-		} catch (e) {
-			console.error("[XCB] analyzeFollowing failed", e);
-			updateStatus("Following analysis failed; see console.");
-		}
 	}
 
 	function markChatFlag(container, user, countryCode) {
 		if (!user || !countryCode) return;
+
+		const shouldShow = config.displayMode === "show" || config.displayMode === "both";
+		if (!shouldShow) return;
+
 		const flag = countryCodeToFlag(countryCode);
+		const countryName = CODE_TO_COUNTRY[countryCode] || countryCode;
 		if (!flag) return;
+
 		const existingId = container.dataset.xcbChatFlagId;
 		if (existingId) {
 			const existing = document.getElementById(existingId);
-			if (existing) return;
+			if (existing) {
+				const expectedText = `${flag} [${countryName}]`;
+				if (existing.textContent === expectedText) return;
+				existing.remove();
+			}
 		}
-		const nameSpan =
-			container.querySelector("span:not([aria-hidden])") ||
-			container.querySelector("span");
+
+		const nameSpan = container.querySelector("span:not([aria-hidden]):not(.xcb-chat-flag)") || container.querySelector("span:not(.xcb-chat-flag)");
 		if (!nameSpan) return;
+
 		const badge = document.createElement("span");
 		const id = `xcb-chat-flag-${Math.random().toString(36).slice(2, 9)}`;
 		badge.id = id;
-		badge.textContent = flag;
-		badge.style =
-			"margin-left:6px;font-size:14px;opacity:0.9;user-select:none;pointer-events:none;";
+		badge.className = "xcb-chat-flag";
+		badge.textContent = `${flag} [${countryName}]`;
+		badge.style.cssText = `
+			font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", system-ui, -apple-system, sans-serif;
+			margin-left: 6px;
+			font-size: 13px;
+			color: rgb(113, 118, 123);
+			font-weight: bold;
+		`;
 		nameSpan.insertAdjacentElement("afterend", badge);
 		container.dataset.xcbChatFlagId = id;
 	}
 
 	function scanChatFlags() {
 		if (!window.location.pathname.startsWith("/messages")) return;
-		const targets = document.querySelectorAll(
-			'div[data-testid="DMDrawer"] div[data-testid="User-Name"], div[data-testid="DMConversation"] div[data-testid="User-Name"], div[aria-label^="Conversation"] div[data-testid="User-Name"], div[data-testid="DMChat"] div[data-testid="User-Name"]',
-		);
+		const targets = document.querySelectorAll('div[data-testid="DMDrawer"] div[data-testid="User-Name"], div[data-testid="DMConversation"] div[data-testid="User-Name"], div[aria-label^="Conversation"] div[data-testid="User-Name"], div[data-testid="DMChat"] div[data-testid="User-Name"]');
 		targets.forEach((node) => {
 			const userKey = extractUsername(node);
 			if (!userKey) return;
@@ -1029,9 +530,18 @@
 	function updateFilteredDisplay() {
 		const counterEl = document.getElementById("xcb-blocked-count");
 		if (counterEl)
-			counterEl.textContent = `Filtered this session: ${filteredCount} (${config.filterMode === "highlight" ? "highlight" : "block"}) | Total: ${
-				config.filterTotals?.overall || 0
-			}`;
+			counterEl.textContent = `Detectados nesta sessão: ${filteredCount} | Total Ocultos: ${config.filterTotals?.overall || 0}`;
+
+		// Atualiza contador de requisições da API
+		const reqCountEl = document.getElementById("xcb-req-count");
+		const reqLimitEl = document.getElementById("xcb-req-limit");
+		const cacheCountEl = document.getElementById("xcb-cache-count");
+		if (reqCountEl) reqCountEl.textContent = String(apiRequestCount);
+		if (reqLimitEl) reqLimitEl.textContent = String(MAX_REQUESTS_PER_15MIN);
+		if (cacheCountEl) {
+			const cachedUsers = Object.keys(config.knownUsers).filter(k => config.knownUsers[k]?.accountCountry).length;
+			cacheCountEl.textContent = String(cachedUsers);
+		}
 	}
 
 	function clearFilterMark(tweet) {
@@ -1040,36 +550,16 @@
 			const noteEl = document.getElementById(noteId);
 			if (noteEl) noteEl.remove();
 		}
-		const badgeId = tweet.dataset.xcbBadgeId;
-		if (badgeId) {
-			const badgeEl = document.getElementById(badgeId);
-			if (badgeEl) badgeEl.remove();
-		}
 		if (tweet.dataset.xcbPrevDisplay !== undefined) {
 			tweet.style.display = tweet.dataset.xcbPrevDisplay;
 			delete tweet.dataset.xcbPrevDisplay;
 		} else if (tweet.dataset.xcbMode === "block") {
 			tweet.style.removeProperty("display");
 		}
-		if (tweet.dataset.xcbPrevPosition !== undefined) {
-			tweet.style.position = tweet.dataset.xcbPrevPosition;
-			delete tweet.dataset.xcbPrevPosition;
-		}
-		const overlayId = tweet.dataset.xcbOverlayId;
-		if (overlayId) {
-			const overlayEl = document.getElementById(overlayId);
-			if (overlayEl) overlayEl.remove();
-			delete tweet.dataset.xcbOverlayId;
-		}
-		tweet.style.removeProperty("outline");
-		tweet.style.removeProperty("outline-offset");
-		tweet.style.removeProperty("box-shadow");
-		tweet.style.removeProperty("background-color");
 		delete tweet.dataset.xcbMode;
 		delete tweet.dataset.xcbReason;
 		delete tweet.dataset.blocked;
 		delete tweet.dataset.xcbNoteId;
-		delete tweet.dataset.xcbBadgeId;
 	}
 
 	function markBlocked(tweet, reason) {
@@ -1078,115 +568,39 @@
 		tweet.dataset.xcbReason = reason;
 		tweet.dataset.xcbPrevDisplay = tweet.style.display || "";
 		tweet.style.setProperty("display", "none", "important");
-		const box = document.createElement("div");
-		const noteId = `xcb-note-${Math.random().toString(36).slice(2, 9)}`;
-		box.id = noteId;
-		box.textContent = `Blocked: ${reason}`;
-		box.style =
-			"background:#000;color:#fff;padding:4px 8px;font-size:11px;border-radius:4px;margin:8px 0;";
-		tweet.parentNode?.insertBefore(box, tweet);
-		tweet.dataset.xcbNoteId = noteId;
-		console.log("Blocked:", reason);
+		console.log("[X-Sentinel] Bloqueado:", reason);
 	}
 
-	function markHighlighted(tweet, reason, countryCode) {
-		tweet.dataset.xcbMode = "highlight";
-		tweet.dataset.xcbReason = reason;
-		const flag = countryCodeToFlag(countryCode);
-		const displayText = flag
-			? `${flag} ${countryCode || ""}`
-			: reason.replace(/\+/g, " + ");
-		const currentPos = getComputedStyle(tweet).position;
-		if (currentPos === "static") {
-			tweet.dataset.xcbPrevPosition = tweet.style.position || "";
-			tweet.style.position = "relative";
-		}
-		const palette = flagPalette(countryCode);
-		tweet.style.setProperty(
-			"outline",
-			`3px solid ${palette.primary}`,
-			"important",
-		);
-		tweet.style.setProperty("outline-offset", "2px", "important");
-		tweet.style.setProperty(
-			"box-shadow",
-			`0 0 0 3px ${palette.shadow}`,
-			"important",
-		);
-		tweet.style.setProperty("background-color", palette.background, "important");
-
-		const badge = document.createElement("div");
-		const badgeId = `xcb-badge-${Math.random().toString(36).slice(2, 9)}`;
-		badge.id = badgeId;
-		badge.textContent = displayText;
-		badge.style =
-			"position:absolute;top:-10px;left:-10px;background:#ff4d4f;color:#fff;padding:6px 10px;border-radius:10px;font-size:12px;font-weight:bold;box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:2;";
-		tweet.appendChild(badge);
-		tweet.dataset.xcbBadgeId = badgeId;
-		addFlagOverlay(tweet, countryCode);
-	}
-
-	function markRegionOnlyHighlight(tweet, regionName) {
-		if (tweet.dataset.xcbMode === "region-only") return;
-		clearFilterMark(tweet);
-		const currentPos = getComputedStyle(tweet).position;
-		if (currentPos === "static") {
-			tweet.dataset.xcbPrevPosition = tweet.style.position || "";
-			tweet.style.position = "relative";
-		}
-		tweet.dataset.xcbMode = "region-only";
-		tweet.dataset.xcbReason = `RegionOnly:${regionName}`;
-		tweet.style.setProperty("outline", "3px solid #f5c400", "important");
-		tweet.style.setProperty("outline-offset", "2px", "important");
-		tweet.style.setProperty(
-			"box-shadow",
-			"0 0 0 3px rgba(245,196,0,0.35)",
-			"important",
-		);
-		tweet.style.setProperty("background-color", "rgba(245,196,0,0.12)", "important");
-
-		const badge = document.createElement("div");
-		const badgeId = `xcb-badge-${Math.random().toString(36).slice(2, 9)}`;
-		badge.id = badgeId;
-		badge.textContent = `Region-only: ${regionName}`;
-		badge.style =
-			"position:absolute;top:-10px;left:-10px;background:#f5c400;color:#1c1c1c;padding:6px 10px;border-radius:10px;font-size:12px;font-weight:bold;box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:2;";
-		tweet.appendChild(badge);
-		tweet.dataset.xcbBadgeId = badgeId;
-	}
-
-	function bumpCounts({ countryCode, lang }) {
+	function bumpCounts({ countryCode, lang, region }) {
 		config.filterTotals = config.filterTotals || defaultTotals();
 		if (countryCode) {
-			blockStats.country[countryCode] =
-				(blockStats.country[countryCode] || 0) + 1;
-			config.filterTotals.country[countryCode] =
-				(config.filterTotals.country[countryCode] || 0) + 1;
+			blockStats.country[countryCode] = (blockStats.country[countryCode] || 0) + 1;
+			config.filterTotals.country[countryCode] = (config.filterTotals.country[countryCode] || 0) + 1;
 		}
 		if (lang) {
 			blockStats.lang[lang] = (blockStats.lang[lang] || 0) + 1;
-			config.filterTotals.lang[lang] =
-				(config.filterTotals.lang[lang] || 0) + 1;
+			config.filterTotals.lang[lang] = (config.filterTotals.lang[lang] || 0) + 1;
 		}
-		if (arguments[0]?.region) {
-			const region = arguments[0].region;
+		if (region) {
 			blockStats.region[region] = (blockStats.region[region] || 0) + 1;
-			config.filterTotals.region[region] =
-				(config.filterTotals.region[region] || 0) + 1;
+			config.filterTotals.region[region] = (config.filterTotals.region[region] || 0) + 1;
 		}
 		config.filterTotals.overall = (config.filterTotals.overall || 0) + 1;
 		config.filterTotals.session = filteredCount;
 	}
 
 	function applyFilterAction(tweet, info) {
+		// Só bloqueia se o modo for "block" ou "both"
+		const shouldBlock = config.displayMode === "block" || config.displayMode === "both";
+		if (!shouldBlock) return;
+
 		const reason = info?.reason;
 		const countryCode = info?.countryCode;
 		const lang = info?.lang || null;
 		const region = info?.region || null;
-		const mode = config.filterMode === "highlight" ? "highlight" : "block";
 		const prevMode = tweet.dataset.xcbMode;
 		const prevReason = tweet.dataset.xcbReason;
-		if (prevMode === mode && prevReason === reason) return;
+		if (prevMode === "block" && prevReason === reason) return;
 
 		clearFilterMark(tweet);
 		if (!reason) return;
@@ -1199,16 +613,11 @@
 			scheduleTotalsSave();
 		}
 
-		if (mode === "highlight") {
-			markHighlighted(tweet, reason, countryCode);
-			return;
-		}
 		markBlocked(tweet, reason);
 	}
 
 	function parseProfileFromJson(obj) {
-		if (!obj || typeof obj !== "object")
-			return { accountCountry: null };
+		if (!obj || typeof obj !== "object") return { accountCountry: null };
 		const result =
 			obj.user?.result ||
 			obj.user_result_by_screen_name?.result ||
@@ -1220,58 +629,16 @@
 
 		if (!result) return { accountCountry: null };
 
-		const about =
-			result.aboutModule ||
-			result.about ||
-			result.legacy?.about ||
-			result.about_account ||
-			result;
+		const about = result.aboutModule || result.about || result.legacy?.about || result.about_account || result;
+		const aboutProfile = result.about_profile || result.aboutProfile || result.profile || result.profile_about || {};
 
-		const aboutProfile =
-			result.about_profile ||
-			result.aboutProfile ||
-			result.profile ||
-			result.profile_about ||
-			{};
+		const accountCountryRaw = about?.accountBasedIn || about?.account_based_in || about?.account_base || about?.accountCountry || aboutProfile?.account_based_in || aboutProfile?.accountBasedIn || null;
+		const accountRegionRaw = about?.accountRegion || about?.account_region || aboutProfile?.account_region || aboutProfile?.accountRegion || null;
+		const usernameChangesRaw = aboutProfile?.usernameChangeCount || aboutProfile?.username_changes || aboutProfile?.screen_name_change_count || about?.usernameChangeCount || about?.username_changes || about?.screen_name_change_count || result.legacy?.screen_name_change_count || null;
 
-		const accountCountryRaw =
-			about?.accountBasedIn ||
-			about?.account_based_in ||
-			about?.account_base ||
-			about?.accountCountry ||
-			aboutProfile?.account_based_in ||
-			aboutProfile?.accountBasedIn ||
-			null;
-		const accountRegionRaw =
-			about?.accountRegion ||
-			about?.account_region ||
-			aboutProfile?.account_region ||
-			aboutProfile?.accountRegion ||
-			null;
-		const usernameChangesRaw =
-			aboutProfile?.usernameChangeCount ||
-			aboutProfile?.username_changes ||
-			aboutProfile?.screen_name_change_count ||
-			about?.usernameChangeCount ||
-			about?.username_changes ||
-			about?.screen_name_change_count ||
-			result.legacy?.screen_name_change_count ||
-			null;
-
-		const accountCountry = accountCountryRaw
-			? COUNTRY_MAP[accountCountryRaw] ||
-				accountCountryRaw.slice(0, 2).toUpperCase()
-			: null;
-		const accountRegion =
-			typeof accountRegionRaw === "string" && accountRegionRaw.trim()
-				? accountRegionRaw.trim()
-				: null;
-		const usernameChanges =
-			typeof usernameChangesRaw === "number"
-				? usernameChangesRaw
-				: Number.isFinite(Number(usernameChangesRaw))
-					? Number(usernameChangesRaw)
-					: null;
+		const accountCountry = accountCountryRaw ? COUNTRY_MAP[accountCountryRaw] || accountCountryRaw.slice(0, 2).toUpperCase() : null;
+		const accountRegion = typeof accountRegionRaw === "string" && accountRegionRaw.trim() ? accountRegionRaw.trim() : null;
+		const usernameChanges = typeof usernameChangesRaw === "number" ? usernameChangesRaw : Number.isFinite(Number(usernameChangesRaw)) ? Number(usernameChangesRaw) : null;
 
 		return { accountCountry, accountRegion, usernameChanges };
 	}
@@ -1283,13 +650,11 @@
 
 	function needsFetch(user) {
 		if (!user) return false;
-		if (
-			config.blockedCountries.size === 0 &&
-			config.blockedLangs.size === 0 &&
-			config.blockedRegions.size === 0 &&
-			!config.highlightRegionDisplayOnly
-		)
-			return false;
+		// Sempre busca se algum filtro está ativo OU se displayMode inclui mostrar país
+		const hasFilters = config.blockedCountries.size > 0 || config.blockedLangs.size > 0 || config.blockedRegions.size > 0;
+		const wantsToShow = config.displayMode === "show" || config.displayMode === "both";
+		if (!hasFilters && !wantsToShow) return false;
+
 		const known = config.knownUsers[user];
 		if (!known) return true;
 		if (known.accountCountry) return false;
@@ -1320,34 +685,21 @@
 		}
 		if (config.pending.has(user)) return false;
 
-		// Avoid hammering if nothing to block
-		if (
-			config.blockedCountries.size === 0 &&
-			config.blockedLangs.size === 0 &&
-			config.blockedRegions.size === 0 &&
-			!config.highlightRegionDisplayOnly
-		)
-			return false;
+		const hasFilters = config.blockedCountries.size > 0 || config.blockedLangs.size > 0 || config.blockedRegions.size > 0;
+		const wantsToShow = config.displayMode === "show" || config.displayMode === "both";
+		if (!hasFilters && !wantsToShow) return false;
 
-		// Respect global throttle
-		const now = nowTs();
-		if (now < nextFetchAllowed) {
-			// schedule retry later by stamping ts to avoid tight loop
-			config.knownUsers[user] = {
-				accountCountry: null,
-				ts: now,
-			};
+		// Verifica se pode fazer requisição (rate limit interno)
+		if (!canMakeApiRequest()) {
+			config.knownUsers[user] = { accountCountry: null, ts: nowTs() };
 			return false;
 		}
 
 		config.pending.add(user);
-		console.log("[XCB] fetching about page for", user);
+		incrementApiCounter();
+		console.log("[X-Sentinel] fetching about page for", user);
 		const host = window.location.host || "x.com";
-		const url = `https://${host}/i/api/graphql/${ABOUT_QUERY_ID}/AboutAccountQuery?variables=${encodeURIComponent(
-			JSON.stringify({ screenName: user }),
-		)}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}&fieldToggles=${encodeURIComponent(
-			JSON.stringify(FIELD_TOGGLES),
-		)}`;
+		const url = `https://${host}/i/api/graphql/${ABOUT_QUERY_ID}/AboutAccountQuery?variables=${encodeURIComponent(JSON.stringify({ screenName: user }))}&features=${encodeURIComponent(JSON.stringify(GRAPHQL_FEATURES))}&fieldToggles=${encodeURIComponent(JSON.stringify(FIELD_TOGGLES))}`;
 
 		fetch(url, {
 			credentials: "include",
@@ -1363,29 +715,21 @@
 				referer: `https://${host}/${user}`,
 			},
 		})
-			.then((resp) =>
-				resp
-					.json()
-					.then((body) => ({ status: resp.status, body }))
-					.catch(() => ({ status: resp.status, body: {} })),
-			)
+			.then((resp) => resp.json().then((body) => ({ status: resp.status, body })).catch(() => ({ status: resp.status, body: {} })))
 			.then(({ status, body }) => {
 				if (status === 429) {
-					nextFetchAllowed = Math.max(
-						nextFetchAllowed,
-						nowTs() + RATE_LIMIT_BACKOFF_MS,
-					);
+					nextFetchAllowed = Math.max(nextFetchAllowed, nowTs() + RATE_LIMIT_BACKOFF_MS);
 					config.pending.delete(user);
 					queueUser(user);
 					return;
 				}
 				if (status >= 400) {
-					console.warn("[XCB] about query failed", status, body?.errors);
+					console.warn("[X-Sentinel] about query failed", status, body?.errors);
 					config.pending.delete(user);
 					return;
 				}
 				const info = parseProfileFromJson(body);
-				console.log("[XCB] about json", user, info);
+				console.log("[X-Sentinel] about json", user, info);
 				if (!info.accountCountry && !info.accountRegion) {
 					config.knownUsers[user] = {
 						accountCountry: null,
@@ -1403,17 +747,17 @@
 					ts: nowTs(),
 				};
 				saveKnownToDB(user, config.knownUsers[user]);
+				saveKnownUsersToLocalStorage(); // Backup no localStorage
 				if (info.accountCountry) {
 					const code = info.accountCountry;
 					if (!config.countryDB[code]) config.countryDB[code] = [];
-					if (!config.countryDB[code].includes(user))
-						config.countryDB[code].push(user);
-					if (config.blockedCountries.has(code)) scanAndHide();
+					if (!config.countryDB[code].includes(user)) config.countryDB[code].push(user);
+					if (config.blockedCountries.has(code) && config.countryFilterEnabled) scanAndHide();
 				}
 				save();
 			})
 			.catch((err) => {
-				console.error("[XCB] fetch about failed", user, err);
+				console.error("[X-Sentinel] fetch about failed", user, err);
 			})
 			.finally(() => {
 				config.pending.delete(user);
@@ -1423,75 +767,72 @@
 	}
 
 	function scanAndHide() {
-		document
-			.querySelectorAll('article[data-testid="tweet"]')
-			.forEach((tweet) => {
-				const userKey = extractUsername(tweet);
-				if (!userKey) return;
+		const tweets = document.querySelectorAll('article[data-testid="tweet"]');
+		const now = nowTs();
+		const shouldBlock = config.displayMode === "block" || config.displayMode === "both";
 
-				const text =
-					tweet.querySelector('[data-testid="tweetText"]')?.textContent ||
-					tweet.innerText ||
-					"";
-				const langMatch = hasBlockedLang(text);
-				let reason = langMatch ? `Lang:${langMatch}` : "";
-				const userInfo = config.knownUsers[userKey];
-				const accountCountry = userInfo?.accountCountry || null;
-				let countryCode = null;
-				let regionName =
-					userInfo?.accountRegion ||
-					(userInfo?.accountCountry
-						? regionFromCountry(userInfo.accountCountry)
-						: null);
-				if (userInfo?.accountRegion && !regionName)
-					regionName = userInfo.accountRegion;
-				if (
-					userInfo &&
-					accountCountry &&
-					config.blockedCountries.has(accountCountry)
-				) {
-					countryCode = accountCountry;
-					reason = reason
-						? `${reason}+Country`
-						: `Country:${accountCountry}`;
+		tweets.forEach((tweet) => {
+			const lastScan = parseInt(tweet.dataset.xcbLastScan || '0', 10);
+			if (now - lastScan < 500) return;
+			tweet.dataset.xcbLastScan = String(now);
+
+			const userKey = extractUsername(tweet);
+			if (!userKey) return;
+			const text = tweet.querySelector('[data-testid="tweetText"]')?.textContent || "";
+
+			let reason = "";
+			let countryCode = null;
+			let langMatch = null;
+			let regionName = null;
+
+			const userInfo = config.knownUsers[userKey];
+			const accountCountry = userInfo?.accountCountry || null;
+			regionName = userInfo?.accountRegion || (userInfo?.accountCountry ? regionFromCountry(userInfo.accountCountry) : null);
+			if (userInfo?.accountRegion && !regionName) regionName = userInfo.accountRegion;
+
+			// Verificação de idioma (independente)
+			if (config.langFilterEnabled && shouldBlock) {
+				langMatch = hasBlockedLang(text);
+				if (langMatch) {
+					reason = `Idioma:${LANG_NAMES[langMatch] || langMatch}`;
 				}
-				if (regionName && config.blockedRegions.has(regionName)) {
-					reason = reason ? `${reason}+Region` : `Region:${regionName}`;
-				}
-				if (accountCountry || regionName) {
-					recordSeen(accountCountry, regionName, tweet);
-				}
-				if (
-					!userInfo ||
-					(!userInfo.accountCountry &&
-						(!userInfo.ts || nowTs() - userInfo.ts >= UNKNOWN_RETRY_MS))
-				) {
-					queueUser(userKey);
-				}
-				renderFlag(tweet, accountCountry || null);
-				renderFooterInfo(tweet, accountCountry || null, userInfo?.usernameChanges);
-				if (!reason && (tweet.dataset.xcbMode || tweet.dataset.blocked)) {
-					clearFilterMark(tweet);
-				}
-				if (
-					!reason &&
-					config.highlightRegionDisplayOnly &&
-					userInfo?.accountRegion &&
-					!userInfo.accountCountry
-				) {
-					markRegionOnlyHighlight(tweet, regionName || userInfo.accountRegion);
-					return;
-				}
-				if (reason)
-					applyFilterAction(tweet, {
-						reason,
-						countryCode,
-						lang: langMatch,
-						region: config.blockedRegions.has(regionName || "")
-							? regionName || null
-							: null,
-					});
-			});
+			}
+
+			// Verificação de país (independente)
+			if (config.countryFilterEnabled && shouldBlock && userInfo && accountCountry && config.blockedCountries.has(accountCountry)) {
+				countryCode = accountCountry;
+				reason = reason ? `${reason} + País:${CODE_TO_COUNTRY[accountCountry] || accountCountry}` : `País:${CODE_TO_COUNTRY[accountCountry] || accountCountry}`;
+			}
+
+			// Verificação de região (independente)
+			if (config.regionFilterEnabled && shouldBlock && regionName && config.blockedRegions.has(regionName)) {
+				reason = reason ? `${reason} + Região:${regionName}` : `Região:${regionName}`;
+			}
+
+			if (accountCountry || regionName) {
+				recordSeen(accountCountry, regionName, tweet);
+			}
+
+			if (!userInfo || (!userInfo.accountCountry && (!userInfo.ts || now - userInfo.ts >= UNKNOWN_RETRY_MS))) {
+				queueUser(userKey);
+			}
+
+			// Renderiza badge do país ao lado do nome
+			renderCountryBadge(tweet, accountCountry);
+
+			if (!reason && (tweet.dataset.xcbMode || tweet.dataset.blocked)) {
+				clearFilterMark(tweet);
+			}
+
+			if (reason) {
+				applyFilterAction(tweet, {
+					reason,
+					countryCode,
+					lang: langMatch,
+					region: config.regionFilterEnabled && config.blockedRegions.has(regionName || "") ? regionName : null
+				});
+			}
+		});
 	}
 
 	function processQueue() {
@@ -1503,7 +844,6 @@
 			if (!needsFetch(user)) continue;
 			const started = fetchCountry(user);
 			if (!started) {
-				// Put it back and wait for the next tick if throttled
 				if (!config.pending.has(user)) fetchQueue.unshift(user);
 				break;
 			}
@@ -1511,19 +851,27 @@
 		}
 	}
 
-	// Sync removed: keep everything local only.
-
 	function ensureSidebarButton(openModal) {
 		const existing = document.getElementById("xcb-button");
-		const nav = document.querySelector('nav[aria-label="Primary"]');
+		const nav = document.querySelector('nav[role="navigation"]');
 		if (!nav) return false;
-		const homeLink = nav.querySelector('a[aria-label="Home"]');
-		const profileLink = nav.querySelector('a[aria-label="Profile"]');
-		const moreEntry =
-			nav.querySelector('[aria-label="More menu items"]') ||
-			nav.querySelector('[aria-label="More"]') ||
-			nav.querySelector('[data-testid="AppTabBar_More_Menu"]');
-		const anchorRef = moreEntry || profileLink || homeLink;
+
+		const allLinks = nav.querySelectorAll('a[href]');
+		let homeLink = null;
+		let profileLink = null;
+
+		for (const link of allLinks) {
+			const href = link.getAttribute('href') || '';
+			if (href === '/home') homeLink = link;
+			if (href.match(/^\/[a-zA-Z0-9_]+$/) && !href.includes('/')) {
+				profileLink = link;
+			}
+		}
+
+		const moreEntry = nav.querySelector('[data-testid="AppTabBar_More_Menu"]') ||
+			nav.querySelector('div[role="button"]');
+
+		const anchorRef = moreEntry || profileLink || homeLink || allLinks[0];
 		if (!anchorRef) return false;
 		const parent = (anchorRef.closest("a, div, button") || anchorRef).parentElement || nav;
 		if (!parent) return false;
@@ -1531,32 +879,16 @@
 		btn.id = "xcb-button";
 		btn.setAttribute("role", "button");
 		btn.href = "javascript:void(0)";
-		btn.innerHTML =
-			'<span class="xcb-icon" style="font-size:22px;line-height:22px;color:#fff;">🚫</span><span class="xcb-label" style="font-size:18px;font-weight:700;">CleanX</span>';
-		btn.style =
-			"display:flex;align-items:center;gap:14px;padding:12px;border-radius:9999px;color:#e7e9ea;text-decoration:none;font-size:17px;font-weight:700;cursor:pointer;max-width:260px;min-width:52px;box-sizing:border-box;";
-		btn.onmouseenter = () => {
-			btn.style.backgroundColor = "rgba(255,255,255,0.08)";
-		};
-		btn.onmouseleave = () => {
-			btn.style.backgroundColor = "transparent";
-		};
-		btn.onclick = (e) => {
-			e.preventDefault();
-			e.stopPropagation();
-			openModal();
-		};
-		btn.onkeydown = (e) => {
-			if (e.key === "Enter" || e.key === " ") {
-				e.preventDefault();
-				openModal();
-			}
-		};
+		btn.innerHTML = '<span class="xcb-icon" style="font-size:22px;line-height:22px;">🛡️</span><span class="xcb-label" style="font-size:18px;font-weight:700;">X-Sentinel</span>';
+		btn.style = "display:flex;align-items:center;gap:14px;padding:12px;border-radius:9999px;color:#e7e9ea;text-decoration:none;font-size:17px;font-weight:700;cursor:pointer;max-width:260px;min-width:52px;box-sizing:border-box;font-family:system-ui,-apple-system,sans-serif;";
+		btn.onmouseenter = () => { btn.style.backgroundColor = "rgba(255,255,255,0.08)"; };
+		btn.onmouseleave = () => { btn.style.backgroundColor = "transparent"; };
+		btn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openModal(); };
+		btn.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openModal(); } };
 		const label = btn.querySelector(".xcb-label");
 		const updateLabelVisibility = () => {
 			if (!label) return;
-			label.style.display =
-				(nav.getBoundingClientRect().width || 0) > 80 ? "inline" : "none";
+			label.style.display = (nav.getBoundingClientRect().width || 0) > 80 ? "inline" : "none";
 		};
 		updateLabelVisibility();
 		if (typeof ResizeObserver !== "undefined") {
@@ -1583,310 +915,644 @@
 		if (document.getElementById("xcb-modal")) return;
 		const modal = document.createElement("div");
 		modal.id = "xcb-modal";
-		modal.style =
-			"display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:10000;align-items:center;justify-content:center;";
-		modal.innerHTML = `<div style="background:#15202b;color:#fff;padding:20px;border-radius:12px;max-width:480px;width:92%;max-height:90vh;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,0.35);">
-            <h2 style="margin:0 0 16px;text-align:center;">X Country & Language Blocker</h2>
-            <div style="font-size:13px;color:#aab8c2;margin-bottom:12px;text-align:center;">Add countries or language scripts to hide or highlight matching posts. Counts show S: this session, T: total (saved).</div>
-            <div style="margin:10px 0 14px;">
-              <strong>Filtered post behavior</strong>
-              <div id="xcb-mode-row" style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;font-size:13px;">
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="xcb-mode" value="block" style="transform:scale(1.1);"> Block (hide)</label>
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="xcb-mode" value="highlight" style="transform:scale(1.1);"> Highlight with flag</label>
-              </div>
-            </div>
-            <strong>Countries</strong><div id="list-c" style="max-height:200px;overflow:auto;margin:8px 0;padding:8px;background:#0002;border-radius:8px;"></div>
-            <input id="add-c" placeholder="Add country (e.g. Israel or IL)" style="width:100%;padding:8px;margin:8px 0;border-radius:8px;">
-            <strong>Regions</strong><div id="list-r" style="max-height:200px;overflow:auto;margin:8px 0;padding:8px;background:#0002;border-radius:8px;"></div>
-            <input id="add-r" placeholder="Add region (e.g. Middle East and North Africa)" style="width:100%;padding:8px;margin:8px 0;border-radius:8px;">
-            <strong>Languages</strong><div id="list-l" style="max-height:200px;overflow:auto;margin:8px 0;padding:8px;background:#0002;border-radius:8px;"></div>
-            <input id="add-l" placeholder="Add language (e.g. ar)" style="width:100%;padding:8px;margin:8px 0;border-radius:8px;">
-            <div id="xcb-blocked-count" style="margin:8px 0;font-size:13px;color:#d9d9d9;">Filtered this session: 0</div>
-            <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:6px 0;"><input type="checkbox" id="xcb-highlight-region-only"> Highlight accounts showing region-only (yellow)</label>
-            <div id="xcb-analytics" style="margin:10px 0;font-size:13px;color:#aab8c2;">Seen stats loading…</div>
-            <button id="xcb-following-scan" style="width:100%;padding:10px;background:#273340;border:none;border-radius:8px;color:#fff;margin-top:8px;cursor:pointer;">Analyze Following (country breakdown)</button>
-            <div id="xcb-following-status" style="margin:6px 0;font-size:12px;color:#aab8c2;"></div>
-            <div id="xcb-following-report" style="max-height:180px;overflow:auto;padding:8px;background:#0002;border-radius:8px;font-size:12px;color:#e7e9ea;"></div>
-            <button id="export-db" style="width:100%;padding:10px;background:#273340;border:none;border-radius:8px;color:#fff;margin-top:12px;cursor:pointer;">Export DB (JSON)</button>
-            <button id="close" style="width:100%;padding:10px;background:#1d9bf0;border:none;border-radius:8px;color:#fff;margin-top:12px;cursor:pointer;">Close</button>
-        </div>`;
+		modal.style.cssText = `
+			display: none;
+			position: fixed;
+			inset: 0;
+			background: rgba(0, 0, 0, 0.6);
+			backdrop-filter: blur(8px);
+			-webkit-backdrop-filter: blur(8px);
+			z-index: 10000;
+			align-items: center;
+			justify-content: center;
+			font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+		`;
+
+		modal.innerHTML = `
+		<div id="xcb-modal-content" style="
+			background: #15202b;
+			color: #e7e9ea;
+			padding: 28px 32px;
+			border-radius: 16px;
+			max-width: 600px;
+			width: 94%;
+			max-height: 88vh;
+			overflow-y: auto;
+			box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+			border: 1px solid #38444d;
+		">
+			<h2 style="margin: 0 0 8px; text-align: center; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; color: #e7e9ea;">
+				🛡️ X-Sentinel
+			</h2>
+			<p style="text-align: center; font-size: 13px; color: #71767b; margin: 0 0 12px;">
+				Bloqueador de País, Região e Idioma para X/Twitter
+			</p>
+
+			<!-- AVISO DE LIMITE DA API -->
+			<div style="margin-bottom: 16px; padding: 12px 14px; background: #1c2732; border-radius: 12px; border: 1px solid #38444d;">
+				<div style="display: flex; align-items: flex-start; gap: 10px;">
+					<span style="font-size: 18px;">⚠️</span>
+					<div>
+						<div style="font-size: 13px; font-weight: 600; color: #f7b928; margin-bottom: 4px;">Aviso: Limite da API do X/Twitter</div>
+						<div style="font-size: 12px; color: #8b98a5; line-height: 1.5;">
+							Esta funcionalidade utiliza a API do X/Twitter que possui <strong style="color:#e7e9ea;">limite baixo de requisições</strong>.
+							A detecção de países funciona melhor em <strong style="color:#e7e9ea;">breves períodos de uso</strong>.
+							Usuários já identificados ficam salvos no cache para reduzir requisições.
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- MODO DE EXIBIÇÃO -->
+			<div style="margin-bottom: 20px; padding: 16px; background: #1c2732; border-radius: 12px; border: 1px solid #38444d;">
+				<div style="font-weight: 700; font-size: 15px; margin-bottom: 12px; color: #1d9bf0;">Modo de Operação</div>
+				<div style="display: flex; flex-direction: column; gap: 8px;">
+					<label style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 8px 12px; background: #192734; border-radius: 8px; border: 1px solid #38444d;">
+						<input type="radio" name="xcb-display-mode" value="show" style="width: 16px; height: 16px; accent-color: #1d9bf0;">
+						<span style="color: #e7e9ea;"><strong>Apenas mostrar país</strong> — Exibe bandeira de TODOS os usuários identificados</span>
+					</label>
+					<label style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 8px 12px; background: #192734; border-radius: 8px; border: 1px solid #38444d;">
+						<input type="radio" name="xcb-display-mode" value="block" style="width: 16px; height: 16px; accent-color: #1d9bf0;">
+						<span style="color: #e7e9ea;"><strong>Apenas bloquear</strong> — Oculta posts dos selecionados abaixo (sem bandeiras)</span>
+					</label>
+					<label style="display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 8px 12px; background: #192734; border-radius: 8px; border: 1px solid #38444d;">
+						<input type="radio" name="xcb-display-mode" value="both" style="width: 16px; height: 16px; accent-color: #1d9bf0;">
+						<span style="color: #e7e9ea;"><strong>Mostrar e bloquear</strong> — Bandeira em TODOS + bloqueia os selecionados</span>
+					</label>
+				</div>
+			</div>
+
+			<!-- SEÇÃO DE BLOQUEIO -->
+			<div id="xcb-block-section">
+				<div style="margin-bottom: 12px; padding: 10px 14px; background: #1c2732; border-radius: 8px; border: 1px solid #38444d;">
+					<div style="font-size: 13px; color: #71767b;">📋 <strong style="color:#e7e9ea;">Lista de Filtros:</strong> Posts de usuários dos países/regiões/idiomas abaixo serão ocultados.</div>
+				</div>
+
+				<!-- PAÍSES -->
+				<div style="margin-bottom: 20px; padding: 16px; background: #1c2732; border-radius: 12px; border: 1px solid #38444d;">
+					<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+						<label style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; cursor: pointer; color: #e7e9ea;">
+							<input type="checkbox" id="xcb-toggle-country" style="width: 18px; height: 18px; accent-color: #1d9bf0;">
+							🌍 Filtrar Países
+						</label>
+						<div style="display: flex; gap: 6px;">
+							<button id="btn-add-all-c" style="padding: 6px 10px; font-size: 11px; background: #273340; border: 1px solid #38444d; border-radius: 8px; color: #8b98a5; cursor: pointer;">Adicionar Todos</button>
+							<button id="btn-clear-c" style="padding: 6px 10px; font-size: 11px; background: #273340; border: 1px solid #38444d; border-radius: 8px; color: #f4212e; cursor: pointer;">Limpar</button>
+						</div>
+					</div>
+					<div id="list-c" style="max-height: 140px; overflow-y: auto; margin-bottom: 10px; padding: 8px; background: #192734; border-radius: 8px; font-size: 13px; border: 1px solid #38444d;"></div>
+					<div style="display: flex; gap: 8px;">
+						<div style="flex: 1; position: relative;">
+							<input type="text" id="search-c" placeholder="🔍 Pesquisar país..." style="width: 100%; padding: 10px 12px; border-radius: 8px; background: #273340; color: #e7e9ea; border: 1px solid #38444d; font-size: 14px; box-sizing: border-box;">
+							<select id="select-c" size="6" style="width: 100%; padding: 0; border-radius: 0 0 12px 12px; background: #273340; color: #e7e9ea; border: 1px solid #38444d; border-top: none; font-size: 14px; display: none; position: absolute; z-index: 100; max-height: 200px;">
+							</select>
+						</div>
+						<button id="btn-add-c" style="padding: 10px 20px; border-radius: 8px; background: #1d9bf0; color: #fff; border: none; cursor: pointer; font-weight: 700; font-size: 14px; align-self: flex-start;">Adicionar</button>
+					</div>
+				</div>
+
+				<!-- REGIÕES -->
+				<div style="margin-bottom: 20px; padding: 16px; background: #1c2732; border-radius: 12px; border: 1px solid #38444d;">
+					<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+						<label style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; cursor: pointer; color: #e7e9ea;">
+							<input type="checkbox" id="xcb-toggle-region" style="width: 18px; height: 18px; accent-color: #1d9bf0;">
+							🗺️ Filtrar Regiões
+						</label>
+						<div style="display: flex; gap: 6px;">
+							<button id="btn-add-all-r" style="padding: 6px 10px; font-size: 11px; background: #273340; border: 1px solid #38444d; border-radius: 8px; color: #8b98a5; cursor: pointer;">Adicionar Todas</button>
+							<button id="btn-clear-r" style="padding: 6px 10px; font-size: 11px; background: #273340; border: 1px solid #38444d; border-radius: 8px; color: #f4212e; cursor: pointer;">Limpar</button>
+						</div>
+					</div>
+					<div id="list-r" style="max-height: 140px; overflow-y: auto; margin-bottom: 10px; padding: 8px; background: #192734; border-radius: 8px; font-size: 13px; border: 1px solid #38444d;"></div>
+					<div style="display: flex; gap: 8px;">
+						<div style="flex: 1; position: relative;">
+							<input type="text" id="search-r" placeholder="🔍 Pesquisar região..." style="width: 100%; padding: 10px 12px; border-radius: 8px; background: #273340; color: #e7e9ea; border: 1px solid #38444d; font-size: 14px; box-sizing: border-box;">
+							<select id="select-r" size="6" style="width: 100%; padding: 0; border-radius: 0 0 12px 12px; background: #273340; color: #e7e9ea; border: 1px solid #38444d; border-top: none; font-size: 14px; display: none; position: absolute; z-index: 100; max-height: 200px;">
+							</select>
+						</div>
+						<button id="btn-add-r" style="padding: 10px 20px; border-radius: 8px; background: #1d9bf0; color: #fff; border: none; cursor: pointer; font-weight: 700; font-size: 14px; align-self: flex-start;">Adicionar</button>
+					</div>
+				</div>
+
+				<!-- IDIOMAS -->
+				<div style="margin-bottom: 20px; padding: 16px; background: #1c2732; border-radius: 12px; border: 1px solid #38444d;">
+					<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+						<label style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; cursor: pointer; color: #e7e9ea;">
+							<input type="checkbox" id="xcb-toggle-lang" style="width: 18px; height: 18px; accent-color: #1d9bf0;">
+							🗣️ Filtrar Idiomas
+						</label>
+						<div style="display: flex; gap: 6px;">
+							<button id="btn-add-all-l" style="padding: 6px 10px; font-size: 11px; background: #273340; border: 1px solid #38444d; border-radius: 8px; color: #8b98a5; cursor: pointer;">Adicionar Todos</button>
+							<button id="btn-clear-l" style="padding: 6px 10px; font-size: 11px; background: #273340; border: 1px solid #38444d; border-radius: 8px; color: #f4212e; cursor: pointer;">Limpar</button>
+						</div>
+					</div>
+					<div id="list-l" style="max-height: 140px; overflow-y: auto; margin-bottom: 10px; padding: 8px; background: #192734; border-radius: 8px; font-size: 13px; border: 1px solid #38444d;"></div>
+					<div style="display: flex; gap: 8px;">
+						<div style="flex: 1; position: relative;">
+							<input type="text" id="search-l" placeholder="🔍 Pesquisar idioma..." style="width: 100%; padding: 10px 12px; border-radius: 8px; background: #273340; color: #e7e9ea; border: 1px solid #38444d; font-size: 14px; box-sizing: border-box;">
+							<select id="select-l" size="6" style="width: 100%; padding: 0; border-radius: 0 0 12px 12px; background: #273340; color: #e7e9ea; border: 1px solid #38444d; border-top: none; font-size: 14px; display: none; position: absolute; z-index: 100; max-height: 200px;">
+							</select>
+						</div>
+						<button id="btn-add-l" style="padding: 10px 20px; border-radius: 8px; background: #1d9bf0; color: #fff; border: none; cursor: pointer; font-weight: 700; font-size: 14px; align-self: flex-start;">Adicionar</button>
+					</div>
+				</div>
+			</div>
+
+			<!-- ESTATÍSTICAS -->
+			<div style="margin-bottom: 16px; padding: 14px; background: #1c2732; border-radius: 12px; border: 1px solid #38444d;">
+				<div id="xcb-blocked-count" style="font-size: 14px; font-weight: 500; color: #1d9bf0; margin-bottom: 8px;">
+					Detectados nesta sessão: 0 | Total Ocultos: 0
+				</div>
+				<div id="xcb-analytics" style="font-size: 12px; color: #71767b; line-height: 1.6;">Carregando estatísticas...</div>
+			</div>
+
+			<!-- STATUS -->
+			<div id="xcb-status" style="margin-bottom: 16px; font-size: 12px; color: #00ba7c; min-height: 18px;"></div>
+
+			<!-- RODAPÉ COM BOTÕES -->
+			<div style="display: flex; gap: 10px; padding-top: 16px; border-top: 1px solid #38444d;">
+				<button id="xcb-save" style="flex: 1; padding: 12px; background: #1d9bf0; border: none; border-radius: 8px; color: #fff; cursor: pointer; font-weight: 700; font-size: 14px;">
+					💾 Salvar
+				</button>
+				<button id="xcb-close" style="flex: 1; padding: 12px; background: #273340; border: 1px solid #38444d; border-radius: 8px; color: #e7e9ea; cursor: pointer; font-weight: 700; font-size: 14px;">
+					✕ Fechar
+				</button>
+			</div>
+		</div>`;
+
 		document.body.appendChild(modal);
 
-		const statusLine = document.createElement("div");
-		statusLine.id = "xcb-status";
-		statusLine.style = "margin-top:8px;font-size:12px;color:#aab8c2;";
-		modal.querySelector("div").appendChild(statusLine);
-
 		updateFilteredDisplay();
-
 		const setStatus = (msg) => {
-			statusLine.textContent = msg || "";
+			const statusEl = document.getElementById("xcb-status");
+			if (statusEl) statusEl.textContent = msg || "";
 		};
 
-		modal
-			.querySelectorAll('input[name="xcb-mode"]')
-			.forEach((input) => {
-				input.checked =
-					input.value ===
-					(config.filterMode === "highlight" ? "highlight" : "block");
-				input.addEventListener("change", () => {
-					if (!input.checked) return;
-					config.filterMode =
-						input.value === "highlight" ? "highlight" : "block";
-					save();
-					setStatus(
-						config.filterMode === "highlight"
-							? "Highlighting filtered posts with flags"
-							: "Blocking filtered posts",
-					);
-					document
-						.querySelectorAll('article[data-testid="tweet"]')
-						.forEach((t) => clearFilterMark(t));
-					safeScan();
-					updateFilteredDisplay();
-				});
-			});
+		// Populate Dropdowns
+		const selC = document.getElementById("select-c");
+		Object.entries(CODE_TO_COUNTRY).sort((a, b) => a[1].localeCompare(b[1], 'pt-BR')).forEach(([code, name]) => {
+			const opt = document.createElement("option");
+			opt.value = code;
+			opt.textContent = `${countryCodeToFlag(code)} ${name}`;
+			selC.appendChild(opt);
+		});
 
-		const followScanBtn = document.getElementById("xcb-following-scan");
-		const followStatus = document.getElementById("xcb-following-status");
-		if (followScanBtn && followStatus) {
-			followScanBtn.onclick = () => {
-				if (followScanBtn.disabled) return;
-				followScanBtn.disabled = true;
-				followStatus.textContent = "Starting following analysis…";
-				analyzeFollowing((msg) => {
-					followStatus.textContent = msg;
-				}).finally(() => {
-					followScanBtn.disabled = false;
-				});
-			};
-		}
+		const selR = document.getElementById("select-r");
+		REGION_DEFS.sort((a, b) => a.name.localeCompare(b.name)).forEach(def => {
+			const opt = document.createElement("option");
+			opt.value = def.name;
+			opt.textContent = def.name;
+			selR.appendChild(opt);
+		});
 
-		const regionOnlyToggle = document.getElementById("xcb-highlight-region-only");
-		if (regionOnlyToggle) {
-			regionOnlyToggle.checked = Boolean(config.highlightRegionDisplayOnly);
-			regionOnlyToggle.addEventListener("change", () => {
-				config.highlightRegionDisplayOnly = regionOnlyToggle.checked;
-				save();
-				setStatus(
-					config.highlightRegionDisplayOnly
-						? "Highlighting region-only accounts in yellow"
-						: "Region-only highlighting disabled",
+		const selL = document.getElementById("select-l");
+		Object.keys(LANG_SCRIPTS).sort().forEach(code => {
+			const opt = document.createElement("option");
+			opt.value = code;
+			opt.textContent = LANG_NAMES[code] || code;
+			selL.appendChild(opt);
+		});
+
+		// Armazena todas as opções para filtrar
+		const allCountryOptions = Array.from(selC.options).map(o => ({ value: o.value, text: o.textContent }));
+		const allRegionOptions = Array.from(selR.options).map(o => ({ value: o.value, text: o.textContent }));
+		const allLangOptions = Array.from(selL.options).map(o => ({ value: o.value, text: o.textContent }));
+
+		// Função genérica para configurar pesquisa com dropdown
+		const setupSearchableDropdown = (searchInput, selectEl, allOptions, onSelect) => {
+			let selectedValue = null;
+
+			const filterOptions = (query) => {
+				const q = query.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+				selectEl.innerHTML = '';
+				const filtered = allOptions.filter(opt =>
+					opt.text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q)
 				);
-				if (!config.highlightRegionDisplayOnly) {
-					document
-						.querySelectorAll('article[data-testid="tweet"]')
-						.forEach((t) => {
-							if (t.dataset.xcbMode === "region-only") clearFilterMark(t);
-						});
-				}
-				safeScan();
+				filtered.forEach(opt => {
+					const o = document.createElement('option');
+					o.value = opt.value;
+					o.textContent = opt.text;
+					selectEl.appendChild(o);
+				});
+				return filtered.length > 0;
+			};
+
+			searchInput.addEventListener('focus', () => {
+				filterOptions(searchInput.value);
+				selectEl.style.display = 'block';
 			});
-		}
+
+			searchInput.addEventListener('input', () => {
+				filterOptions(searchInput.value);
+				selectEl.style.display = 'block';
+				selectedValue = null;
+			});
+
+			searchInput.addEventListener('blur', (e) => {
+				// Delay para permitir click no select
+				setTimeout(() => {
+					if (!selectEl.contains(document.activeElement)) {
+						selectEl.style.display = 'none';
+					}
+				}, 150);
+			});
+
+			selectEl.addEventListener('change', () => {
+				if (selectEl.value) {
+					selectedValue = selectEl.value;
+					const selectedOption = allOptions.find(o => o.value === selectEl.value);
+					if (selectedOption) {
+						searchInput.value = selectedOption.text;
+					}
+					selectEl.style.display = 'none';
+				}
+			});
+
+			selectEl.addEventListener('dblclick', () => {
+				if (selectEl.value) {
+					onSelect(selectEl.value);
+					searchInput.value = '';
+					selectedValue = null;
+					selectEl.style.display = 'none';
+				}
+			});
+
+			searchInput.addEventListener('keydown', (e) => {
+				if (e.key === 'Enter') {
+					e.preventDefault();
+					if (selectedValue) {
+						onSelect(selectedValue);
+						searchInput.value = '';
+						selectedValue = null;
+						selectEl.style.display = 'none';
+					} else if (selectEl.options.length > 0) {
+						const firstVal = selectEl.options[0].value;
+						onSelect(firstVal);
+						searchInput.value = '';
+						selectEl.style.display = 'none';
+					}
+				} else if (e.key === 'Escape') {
+					selectEl.style.display = 'none';
+					searchInput.blur();
+				} else if (e.key === 'ArrowDown' && selectEl.style.display !== 'none') {
+					e.preventDefault();
+					selectEl.focus();
+					if (selectEl.options.length > 0) {
+						selectEl.selectedIndex = 0;
+					}
+				}
+			});
+
+			selectEl.addEventListener('keydown', (e) => {
+				if (e.key === 'Enter') {
+					e.preventDefault();
+					if (selectEl.value) {
+						onSelect(selectEl.value);
+						searchInput.value = '';
+						selectedValue = null;
+						selectEl.style.display = 'none';
+						searchInput.focus();
+					}
+				} else if (e.key === 'Escape') {
+					selectEl.style.display = 'none';
+					searchInput.focus();
+				}
+			});
+
+			return () => selectedValue;
+		};
+
+		// Configurar pesquisa para países
+		const searchC = document.getElementById('search-c');
+		let getSelectedCountry = setupSearchableDropdown(searchC, selC, allCountryOptions, (val) => {
+			if (val && !config.blockedCountries.has(val)) {
+				config.blockedCountries.add(val);
+				save();
+				refreshList();
+				safeScan();
+				const name = CODE_TO_COUNTRY[val] || val;
+				setStatus(`País bloqueado: ${name}`);
+			}
+		});
+
+		// Configurar pesquisa para regiões
+		const searchR = document.getElementById('search-r');
+		let getSelectedRegion = setupSearchableDropdown(searchR, selR, allRegionOptions, (val) => {
+			if (val && !config.blockedRegions.has(val)) {
+				config.blockedRegions.add(val);
+				save();
+				refreshList();
+				safeScan();
+				setStatus(`Região bloqueada: ${val}`);
+			}
+		});
+
+		// Configurar pesquisa para idiomas
+		const searchL = document.getElementById('search-l');
+		let getSelectedLang = setupSearchableDropdown(searchL, selL, allLangOptions, (val) => {
+			if (val && !config.blockedLangs.has(val)) {
+				config.blockedLangs.add(val);
+				save();
+				refreshList();
+				safeScan();
+				const name = LANG_NAMES[val] || val;
+				setStatus(`Idioma bloqueado: ${name}`);
+			}
+		});
+
+		// Função para mostrar/ocultar seção de bloqueio baseado no modo
+		const updateBlockSectionVisibility = () => {
+			const blockSection = document.getElementById("xcb-block-section");
+			if (blockSection) {
+				if (config.displayMode === "show") {
+					blockSection.style.display = "none";
+				} else {
+					blockSection.style.display = "block";
+				}
+			}
+		};
+
+		// Display mode handlers
+		modal.querySelectorAll('input[name="xcb-display-mode"]').forEach((input) => {
+			input.checked = input.value === config.displayMode;
+			input.addEventListener("change", () => {
+				if (!input.checked) return;
+				config.displayMode = input.value;
+				save();
+				const modeNames = { show: "Apenas mostrar país", block: "Apenas bloquear", both: "Mostrar e bloquear" };
+				setStatus(`Modo alterado: ${modeNames[config.displayMode]}`);
+				// Atualiza visibilidade da seção de bloqueio
+				updateBlockSectionVisibility();
+				// Limpa marcações e refaz o scan
+				document.querySelectorAll('article[data-testid="tweet"]').forEach(t => {
+					clearFilterMark(t);
+					delete t.dataset.xcbLastScan;
+					delete t.dataset.xcbCountryBadgeId;
+					const badge = t.querySelector('.xcb-country-badge');
+					if (badge) badge.remove();
+				});
+				safeScan();
+				updateFilteredDisplay();
+			});
+		});
+
+		// Atualiza visibilidade inicial
+		updateBlockSectionVisibility();
+
+		// Toggle handlers
+		const toggleCountry = document.getElementById("xcb-toggle-country");
+		const toggleRegion = document.getElementById("xcb-toggle-region");
+		const toggleLang = document.getElementById("xcb-toggle-lang");
+
+		toggleCountry.checked = config.countryFilterEnabled;
+		toggleRegion.checked = config.regionFilterEnabled;
+		toggleLang.checked = config.langFilterEnabled;
+
+		toggleCountry.addEventListener("change", () => {
+			config.countryFilterEnabled = toggleCountry.checked;
+			save();
+			setStatus(config.countryFilterEnabled ? "Filtro de países ativado" : "Filtro de países desativado");
+			document.querySelectorAll('article[data-testid="tweet"]').forEach(t => clearFilterMark(t));
+			safeScan();
+		});
+
+		toggleRegion.addEventListener("change", () => {
+			config.regionFilterEnabled = toggleRegion.checked;
+			save();
+			setStatus(config.regionFilterEnabled ? "Filtro de regiões ativado" : "Filtro de regiões desativado");
+			document.querySelectorAll('article[data-testid="tweet"]').forEach(t => clearFilterMark(t));
+			safeScan();
+		});
+
+		toggleLang.addEventListener("change", () => {
+			config.langFilterEnabled = toggleLang.checked;
+			save();
+			setStatus(config.langFilterEnabled ? "Filtro de idiomas ativado" : "Filtro de idiomas desativado");
+			document.querySelectorAll('article[data-testid="tweet"]').forEach(t => clearFilterMark(t));
+			safeScan();
+		});
 
 		const refreshList = () => {
 			const countryList = document.getElementById("list-c");
 			countryList.innerHTML = "";
-			Array.from(config.blockedCountries)
-				.sort()
-				.forEach((c) => {
+			if (config.blockedCountries.size === 0) {
+				countryList.innerHTML = '<span style="color:#71767b;">Nenhum país na lista</span>';
+			} else {
+				Array.from(config.blockedCountries).sort().forEach((c) => {
 					const row = document.createElement("div");
-					row.id = `xcb-c-${c}`;
-					row.style.display = "flex";
-					row.style.justifyContent = "space-between";
-					row.style.padding = "4px 0";
-					row.innerHTML = `<span>${c} <span class="xcb-count" style="color:#aab8c2;">(S:${
-						blockStats.country[c] || 0
-					} | T:${config.filterTotals?.country?.[c] || 0})</span></span><span style="cursor:pointer;color:#f00;">×</span>`;
+					row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin:2px 0;background:#273340;border-radius:8px;border:1px solid #38444d;";
+					const countryName = CODE_TO_COUNTRY[c] || c;
+					row.innerHTML = `<span style="color:#e7e9ea;">${countryCodeToFlag(c)} ${countryName} <span style="color:#71767b;">(S:${blockStats.country[c] || 0} | T:${config.filterTotals?.country?.[c] || 0})</span></span><span style="cursor:pointer;color:#f4212e;font-size:16px;padding:0 4px;">×</span>`;
 					row.lastChild.addEventListener("click", () => {
 						config.blockedCountries.delete(c);
 						save();
 						refreshList();
-						scanAndHide();
-						setStatus(`Removed country ${c}`);
+						safeScan();
+						setStatus(`País removido: ${countryName}`);
 					});
 					countryList.appendChild(row);
 				});
+			}
 
 			const regionList = document.getElementById("list-r");
 			regionList.innerHTML = "";
-			Array.from(config.blockedRegions)
-				.sort()
-				.forEach((r) => {
+			if (config.blockedRegions.size === 0) {
+				regionList.innerHTML = '<span style="color:#71767b;">Nenhuma região na lista</span>';
+			} else {
+				Array.from(config.blockedRegions).sort().forEach((r) => {
 					const row = document.createElement("div");
-					row.id = `xcb-r-${r}`;
-					row.style.display = "flex";
-					row.style.justifyContent = "space-between";
-					row.style.padding = "4px 0";
-					row.innerHTML = `<span>${r} <span class="xcb-count" style="color:#aab8c2;">(S:${
-						blockStats.region[r] || 0
-					} | T:${config.filterTotals?.region?.[r] || 0})</span></span><span style="cursor:pointer;color:#f00;">×</span>`;
+					row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin:2px 0;background:#273340;border-radius:8px;border:1px solid #38444d;";
+					row.innerHTML = `<span style="color:#e7e9ea;">${r} <span style="color:#71767b;">(S:${blockStats.region[r] || 0} | T:${config.filterTotals?.region?.[r] || 0})</span></span><span style="cursor:pointer;color:#f4212e;font-size:16px;padding:0 4px;">×</span>`;
 					row.lastChild.addEventListener("click", () => {
 						config.blockedRegions.delete(r);
 						save();
 						refreshList();
-						scanAndHide();
-						setStatus(`Removed region ${r}`);
+						safeScan();
+						setStatus(`Região removida: ${r}`);
 					});
 					regionList.appendChild(row);
 				});
+			}
 
 			const langList = document.getElementById("list-l");
 			langList.innerHTML = "";
-			Array.from(config.blockedLangs)
-				.sort()
-				.forEach((l) => {
+			if (config.blockedLangs.size === 0) {
+				langList.innerHTML = '<span style="color:#71767b;">Nenhum idioma na lista</span>';
+			} else {
+				Array.from(config.blockedLangs).sort().forEach((l) => {
 					const row = document.createElement("div");
-					row.id = `xcb-l-${l}`;
-					row.style.display = "flex";
-					row.style.justifyContent = "space-between";
-					row.style.padding = "4px 0";
-					row.innerHTML = `<span>${l} <span class="xcb-count" style="color:#aab8c2;">(S:${
-						blockStats.lang[l] || 0
-					} | T:${config.filterTotals?.lang?.[l] || 0})</span></span><span style="cursor:pointer;color:#f00;">×</span>`;
+					row.style.cssText = "display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin:2px 0;background:#273340;border-radius:8px;border:1px solid #38444d;";
+					row.innerHTML = `<span style="color:#e7e9ea;">${LANG_NAMES[l] || l} <span style="color:#71767b;">(S:${blockStats.lang[l] || 0} | T:${config.filterTotals?.lang?.[l] || 0})</span></span><span style="cursor:pointer;color:#f4212e;font-size:16px;padding:0 4px;">×</span>`;
 					row.lastChild.addEventListener("click", () => {
 						config.blockedLangs.delete(l);
 						save();
 						refreshList();
-						scanAndHide();
-						setStatus(`Removed language ${l}`);
+						safeScan();
+						setStatus(`Idioma removido: ${l}`);
 					});
 					langList.appendChild(row);
 				});
+			}
 
 			const analyticsDiv = document.getElementById("xcb-analytics");
 			if (analyticsDiv) {
-				const topCountries = Object.entries(
-					config.analytics?.seenCountry || {},
-				)
-					.sort((a, b) => b[1] - a[1])
-					.slice(0, 8)
-					.map(
-						([code, count]) =>
-							`${countryCodeToFlag(code) || ""} ${code} (${count})`,
-					)
-					.join(", ");
-				const topRegions = Object.entries(config.analytics?.seenRegion || {})
-					.sort((a, b) => b[1] - a[1])
-					.slice(0, 6)
-					.map(([name, count]) => `${name} (${count})`)
-					.join(", ");
-				analyticsDiv.innerHTML = `<div style="margin-top:6px;">Seen (total): ${
-					config.analytics?.seenTotal || 0
-				}</div><div style="margin-top:4px;">Top countries: ${
-					topCountries || "—"
-				}</div><div style="margin-top:4px;">Top regions: ${
-					topRegions || "—"
-				}</div>`;
+				const topCountries = Object.entries(config.analytics?.seenCountry || {}).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([code, count]) => `${countryCodeToFlag(code)} ${CODE_TO_COUNTRY[code] || code} (${count})`).join(", ");
+				const topRegions = Object.entries(config.analytics?.seenRegion || {}).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, count]) => `${name} (${count})`).join(", ");
+				analyticsDiv.innerHTML = `
+					<div><strong>Vistos (total):</strong> ${config.analytics?.seenTotal || 0}</div>
+					<div><strong>Principais países:</strong> ${topCountries || "—"}</div>
+					<div><strong>Principais regiões:</strong> ${topRegions || "—"}</div>
+				`;
 			}
 		};
 
-		const openModal = () => {
-			modal.style.display = "flex";
-			refreshList();
-			updateFilteredDisplay();
-		};
+		const openModal = () => { modal.style.display = "flex"; refreshList(); updateFilteredDisplay(); };
 		const closeModal = () => (modal.style.display = "none");
 
-		const placeButton = () => {
-			if (!ensureSidebarButton(openModal)) setTimeout(placeButton, 700);
-		};
+		const placeButton = () => { if (!ensureSidebarButton(openModal)) setTimeout(placeButton, 700); };
 		placeButton();
-		modal.addEventListener("click", (e) => {
-			if (e.target === modal) closeModal();
-		});
-		document.addEventListener("keydown", (e) => {
-			if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
-				e.preventDefault();
-				openModal();
-			}
-			if (e.key === "Escape") closeModal();
-		});
-		document.getElementById("close").onclick = () => closeModal();
-		document.getElementById("export-db").onclick = () => {
-			setStatus("DB exported to console");
-			console.log("XCB DB", exportDB());
+		modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+		document.addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") { e.preventDefault(); openModal(); } if (e.key === "Escape") closeModal(); });
+
+		// Botões do rodapé
+		document.getElementById("xcb-close").onclick = () => closeModal();
+		document.getElementById("xcb-save").onclick = () => {
+			save();
+			saveTotalsToDB();
+			setStatus("Configurações salvas com sucesso!");
 		};
-		document.getElementById("add-c").onkeydown = (e) => {
-			if (e.key === "Enter") {
-				const v = e.target.value.trim();
-				const code = resolveCountryCode(v);
-				if (!code) {
-					setStatus(
-						`Could not resolve "${v}". Try a 2-letter code or country name.`,
-					);
-					return;
-				}
-				config.blockedCountries.add(code);
-				save();
-				refreshList();
-				scanAndHide();
-				setStatus(`Added country ${code}`);
-				e.target.value = "";
+
+		// Botões de adicionar
+		document.getElementById("btn-add-c").onclick = () => {
+			const code = document.getElementById("select-c").value;
+			if (!code) {
+				setStatus("Selecione um país para bloquear");
+				return;
 			}
+			config.blockedCountries.add(code);
+			save(); refreshList(); safeScan();
+			setStatus(`País bloqueado: ${CODE_TO_COUNTRY[code] || code}`);
+			document.getElementById("search-c").value = "";
+			document.getElementById("select-c").style.display = "none";
 		};
-		document.getElementById("add-l").onkeydown = (e) => {
-			if (e.key === "Enter") {
-				const v = e.target.value.trim().toLowerCase();
-				if (v) {
-					config.blockedLangs.add(v);
-					save();
-					refreshList();
-					scanAndHide();
-					setStatus(`Added language ${v}`);
-					e.target.value = "";
-				}
+
+		document.getElementById("btn-add-r").onclick = () => {
+			const val = document.getElementById("select-r").value;
+			if (!val) {
+				setStatus("Selecione uma região para bloquear");
+				return;
 			}
+			config.blockedRegions.add(val);
+			save(); refreshList(); safeScan();
+			setStatus(`Região bloqueada: ${val}`);
+			document.getElementById("search-r").value = "";
+			document.getElementById("select-r").style.display = "none";
 		};
-		document.getElementById("add-r").onkeydown = (e) => {
-			if (e.key === "Enter") {
-				const v = e.target.value.trim();
-				const resolved = resolveRegionName(v);
-				if (!resolved) {
-					setStatus(`Unknown region "${v}". Try a listed region name.`);
-					return;
-				}
-				config.blockedRegions.add(resolved);
-				save();
-				refreshList();
-				scanAndHide();
-				setStatus(`Added region ${resolved}`);
-				e.target.value = "";
+
+		document.getElementById("btn-add-l").onclick = () => {
+			const val = document.getElementById("select-l").value;
+			if (!val) {
+				setStatus("Selecione um idioma para bloquear");
+				return;
 			}
+			config.blockedLangs.add(val);
+			save(); refreshList(); safeScan();
+			setStatus(`Idioma bloqueado: ${LANG_NAMES[val] || val}`);
+			document.getElementById("search-l").value = "";
+			document.getElementById("select-l").style.display = "none";
 		};
+
+		// Botões "Adicionar Todos"
+		document.getElementById("btn-add-all-c").onclick = () => {
+			Object.values(COUNTRY_MAP).forEach(code => config.blockedCountries.add(code));
+			save(); refreshList(); safeScan();
+			setStatus("Todos os países adicionados!");
+		};
+
+		document.getElementById("btn-add-all-r").onclick = () => {
+			REGION_DEFS.forEach(def => config.blockedRegions.add(def.name));
+			save(); refreshList(); safeScan();
+			setStatus("Todas as regiões adicionadas!");
+		};
+
+		document.getElementById("btn-add-all-l").onclick = () => {
+			Object.keys(LANG_SCRIPTS).forEach(code => config.blockedLangs.add(code));
+			save(); refreshList(); safeScan();
+			setStatus("Todos os idiomas adicionados!");
+		};
+
+		// Botões "Limpar"
+		document.getElementById("btn-clear-c").onclick = () => {
+			config.blockedCountries.clear();
+			save(); refreshList();
+			document.querySelectorAll('article[data-testid="tweet"]').forEach(t => clearFilterMark(t));
+			safeScan();
+			setStatus("Lista de países limpa!");
+		};
+
+		document.getElementById("btn-clear-r").onclick = () => {
+			config.blockedRegions.clear();
+			save(); refreshList();
+			document.querySelectorAll('article[data-testid="tweet"]').forEach(t => clearFilterMark(t));
+			safeScan();
+			setStatus("Lista de regiões limpa!");
+		};
+
+		document.getElementById("btn-clear-l").onclick = () => {
+			config.blockedLangs.clear();
+			save(); refreshList();
+			document.querySelectorAll('article[data-testid="tweet"]').forEach(t => clearFilterMark(t));
+			safeScan();
+			setStatus("Lista de idiomas limpa!");
+		};
+	}
+
+	function debouncedScan() {
+		if (scanDebounceTimer) return;
+		scanDebounceTimer = setTimeout(() => {
+			scanDebounceTimer = null;
+			safeScan();
+		}, 300);
 	}
 
 	function start() {
 		const target = document.body || document.documentElement;
-		if (!target) {
-			document.addEventListener("DOMContentLoaded", start, { once: true });
-			return;
-		}
-		const observer = new MutationObserver(() => {
-			safeScan();
+		if (!target) { document.addEventListener("DOMContentLoaded", start, { once: true }); return; }
+
+		const observer = new MutationObserver((mutations) => {
+			const dominated = mutations.every(m => {
+				if (m.type === 'childList') {
+					for (const node of m.addedNodes) {
+						if (node.nodeType === 1 && (node.id?.startsWith('xcb-') || node.className?.includes?.('xcb-'))) {
+							return true;
+						}
+					}
+				}
+				return false;
+			});
+			if (dominated) return;
+			debouncedScan();
 		});
 		observer.observe(target, { childList: true, subtree: true });
-		setInterval(safeScan, 4000);
+		setInterval(safeScan, 5000);
 		setInterval(processQueue, PREFETCH_INTERVAL_MS);
-		setTimeout(() => {
-			safeScan();
-			processQueue();
-			injectUI();
-		}, 1500);
+		setTimeout(() => { safeScan(); processQueue(); injectUI(); }, 1500);
 	}
 
 	function safeScan() {
+		if (isScanning) return;
+		isScanning = true;
 		try {
 			scanAndHide();
 			scanChatFlags();
 		} catch (e) {
-			console.error("scan error", e);
+			console.error("[X-Sentinel] scan error", e);
+		} finally {
+			isScanning = false;
 		}
 	}
 
 	Promise.all([loadKnownFromDB(), loadTotalsFromDB()]).finally(() => start());
 
-	console.log(
-		"X Country Blocker v5.1 (CLEAN) ready — nothing blocked until you add it",
-	);
+	console.log("X-Sentinel v7.0 (PT-BR Swiss Design) pronto");
 })();
