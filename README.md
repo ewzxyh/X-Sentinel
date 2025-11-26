@@ -1,53 +1,50 @@
 ## X-Sentinel - PT-BR
 
-Script de usuário pessoal (e extensão do Chrome) para X/Twitter que filtra publicações por país, região ou idioma, com destaque opcional.
+Userscript e extensão para X/Twitter que filtra publicações por país, região ou idioma, oferecendo opções de destaque visual.
 
 ### Recursos
-- Adicione ou remova scripts de países, regiões e idiomas bloqueados (sem valores padrão).
+- **Gerenciamento de Filtros:** Adicione ou remova países, regiões e idiomas da lista de bloqueio (inicia sem padrões predefinidos).
 
-- Escolha o comportamento do filtro: oculte ou destaque as correspondências (borda/fundo vermelho). Contas com restrição de região podem ser destacadas em amarelo.
+- **Comportamento Flexível:** Escolha entre ocultar ou destacar as correspondências (borda/fundo vermelho). Contas com restrição de região podem ser destacadas em amarelo.
 
-- Contagens por sessão e totais persistidas no IndexedDB; exportações disponíveis na interface do usuário.
+- **Persistência de Dados:** Contagens por sessão e totais históricos são salvos no IndexedDB; função de exportação disponível na interface.
 
-- Busca dados da seção "Sobre" do perfil para detectar alterações de país/região e nome de usuário.
+- **Detecção Inteligente:** Monitora a seção "Sobre" do perfil para identificar alterações de país/região e nome de usuário.
 
-- O botão de configurações na barra de navegação à esquerda (ícone 🚫) abre o modal para edições.
+- **Acesso Fácil:** O botão de configurações (ícone 🚫) na barra de navegação lateral abre o painel de edições.
 
-- ### Imagens
+### Imagens
 
 Menu da barra lateral:
 
-<img width="425" height="1391" alt="image" src="https://github.com/user-attachments/assets/ac24a7d2-a08c-4705-9252-bb344b3760c5" />
+<img width="292" height="834" alt="image" src="https://github.com/user-attachments/assets/b6b3f009-c20d-4b2a-bc66-2bb86baa539f" />
 
 Menu de configurações:
 
-<img width="845" height="1476" alt="image" src="https://github.com/user-attachments/assets/b4f4780e-39a7-4c0f-a4ac-5136b41cbc34" />
+<img width="684" height="741" alt="image" src="https://github.com/user-attachments/assets/85b074e2-5078-4df0-b785-a01e7c2b4d7f" />
 
-Mostra todos os países do usuário nas postagens:
+Exibição de países nas postagens:
 
-<img width="1078" height="566" alt="image" src="https://github.com/user-attachments/assets/cd3e2e41-953c-4957-9d6b-fc8ca2c27d66" />
-
-As postagens destacadas são óbvias (se não estiverem bloqueadas):
-
-<img width="1036" height="538" alt="image" src="https://github.com/user-attachments/assets/3b16c614-75b5-4b30-bd5b-65a66701ebd1" />
+<img width="601" height="280" alt="image" src="https://github.com/user-attachments/assets/dff19c3f-ee5a-4e8b-b6b6-5cc248636a81" />
 
 ### Uso
-1) Userscript: baixe `X-Sentinel.user.js` da seção Releases (ou use `X-Sentinel-user.js` neste repositório) e instale-o no seu gerenciador de userscripts (Tampermonkey/Greasemonkey).
+1) **Userscript:** Baixe `X-Sentinel.user.js` da seção Releases (ou use `X-Sentinel-user.js` deste repositório) e instale-o no seu gerenciador de userscripts (Tampermonkey/Greasemonkey).
 
-2) Extensão do Chrome: baixe o arquivo `X-Sentinel-extension.zip` da seção Releases e carregue-o como uma extensão descompactada em `chrome://extensions` (Modo Desenvolvedor) ou carregue a pasta `extension/` diretamente.
+2) **Extensão do Chrome:** Baixe o arquivo `X-Sentinel-extension.zip` da seção Releases. Em `chrome://extensions` (ative o Modo Desenvolvedor), carregue-o como uma extensão descompactada ou carregue a pasta `extension/` diretamente.
 
-3) Abra o X/Twitter e clique no botão 🚫 X-Sentinel em Perfil, na barra de navegação à esquerda.
+3) **Acesso:** Abra o X/Twitter e clique no botão **🚫 X-Sentinel** na barra de navegação lateral.
 
-4) Adicione países/regiões/idiomas; ative a exibição em bloco versus destaque e destaque apenas da região.
+4) **Configuração:** Adicione países/regiões/idiomas; alterne entre o modo de ocultação ou destaque visual.
 
-5) Recarregue a página para aplicar as alterações; use a opção Exportar Banco de Dados para depuração ou backup.
+5) **Aplicação:** Recarregue a página para aplicar as alterações; utilize a opção "Exportar Banco de Dados" para backups ou depuração.
 
 ### Notas de Desenvolvimento
-- Sem etapa de compilação; edite o arquivo `X-Sentinel-user.js` diretamente.
+- **Zero Build:** Não há etapa de compilação; edite o arquivo `X-Sentinel-user.js` diretamente.
 
-- Formato opcional: `npx prettier --check "X-Sentinel-user.js"`.
+- **Formatação (Opcional):** `npx prettier --check "X-Sentinel-user.js"`.
 
-- Armazenamento principal: `localStorage` + IndexedDB (armazenamento `known` para usuários, `stats` para totais).
+- **Armazenamento:** Utiliza `localStorage` + IndexedDB (store `known` para usuários, `stats` para totais).
 
-- Ponto de entrada da extensão: `extension/content.js`, manifesto em `extension/manifest.json`.
-- CI: envia para `main`/`master` os artefatos de compilação (script do usuário, extensão compactada, changelog) como artefatos de fluxo de trabalho. A marcação `v*` publica uma versão no GitHub com esses arquivos anexados e o changelog como corpo da versão.
+- **Extensão:** Ponto de entrada em `extension/content.js`, manifesto em `extension/manifest.json`.
+
+- **CI/CD:** Pushes na branch `main`/`master` geram artefatos de build (userscript, extensão zipada, changelog). Tags `v*` publicam automaticamente uma Release no GitHub com estes arquivos e o changelog.
