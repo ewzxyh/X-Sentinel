@@ -1,6 +1,6 @@
 ## X-Sentinel - PT-BR
 
-Script de usuário pessoal (e extensão do Chrome) para X/Twitter que filtra publicações por país, região ou idioma, com destaque opcional.
+Script de usuário pessoal (e extensão do Chrome) para X/Twitter que filtra publicações por país, região ou idioma. Opção de mostrar bandeiras, bloquear ou ambos.
 
 ### Recursos
 - Adicione ou remova scripts de países, regiões e idiomas bloqueados (sem valores padrão).
