@@ -1,4 +1,4 @@
- ## X-Sentinel - PT-BR
+### X-Sentinel - PT-BR
 
 Userscript e extensão para X/Twitter que filtra publicações por país, região ou idioma, oferecendo opções de destaque visual.
 ### Recursos
